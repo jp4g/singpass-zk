@@ -15,8 +15,7 @@
     "docker:up": "git submodule update --init --recursive && docker compose up --build",
     "docker:down": "docker compose down -v",
     "circuit:compile": "cd circuit && $HOME/.nargo/bin/nargo compile",
-    "mockpass:install": "scripts/apply-patches.sh && cd deps/mockpass && npm install",
-    "mockpass:patch": "scripts/apply-patches.sh"
+    "mockpass:install": "scripts/apply-patches.sh && cd deps/mockpass && npm install"
   },
   "engines": {
     "bun": ">=1.1.0"

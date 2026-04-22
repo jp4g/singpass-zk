@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Apply local patches to deps/mockpass. Idempotent: skips patches already applied.
-# See patches/README.md for why each patch exists.
+# Bash-only — uses arrays + `shopt -s nullglob`. Don't switch the shebang to
+# /bin/sh (busybox/dash will fail). Dockerfile.mockpass invokes the patch
+# utility directly instead of sourcing this script.
 
 set -euo pipefail
 

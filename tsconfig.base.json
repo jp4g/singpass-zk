@@ -20,7 +20,6 @@
 
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": false
+    "isolatedModules": true
   }
 }

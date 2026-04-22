@@ -22,8 +22,5 @@ circuit/proofs/
 # Driver runtime state
 .mockpass.pid
 
-# RP-generated prover inputs
-circuit/Prover.toml
-
 # Bench-browser symlinked artifact
 packages/bench-browser/public/singpass_zk.json

@@ -1,6 +1,5 @@
-import { defineConfig, type Plugin, type PluginOption } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
-import copy from "rollup-plugin-copy";
 import {
   runOidcFlow,
   isMockpassReady,
@@ -9,16 +8,6 @@ import {
 
 export default defineConfig({
   plugins: [
-    copy({
-      targets: [
-        {
-          src: "node_modules/**/*.wasm",
-          dest: "node_modules/.vite/dist",
-        },
-      ],
-      copySync: true,
-      hook: "buildStart",
-    }) as PluginOption,
     nodePolyfills(),
     wasmMime(),
     coopCoep(),
@@ -26,10 +15,6 @@ export default defineConfig({
   ],
   server: {
     host: "0.0.0.0",
-    headers: {
-      "Cross-Origin-Embedder-Policy": "require-corp",
-      "Cross-Origin-Opener-Policy": "same-origin",
-    },
   },
   build: {
     target: "esnext",

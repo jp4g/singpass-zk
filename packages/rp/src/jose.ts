@@ -71,10 +71,7 @@ export async function decryptAndVerify(
   const jweParts = splitJweCompact(idTokenJwe);
 
   const encKey = await importJWK(rpEncPrivateJwk);
-  const { plaintext, protectedHeader: jweHeader } = await compactDecrypt(
-    idTokenJwe,
-    encKey,
-  );
+  const { plaintext } = await compactDecrypt(idTokenJwe, encKey);
   // The decrypted plaintext is the inner compact JWS (string bytes).
   const jwsCompact = fromUtf8(plaintext);
   const jwsParts = splitJwsCompact(jwsCompact);
@@ -126,9 +123,6 @@ export async function decryptAndVerify(
       `expected 32-byte pubkey coords, got x=${pubX.length} y=${pubY.length}`,
     );
   }
-
-  // jweHeader is referenced to silence TS unused warnings; also useful for debug.
-  void jweHeader;
 
   return {
     jwe: jweParts,

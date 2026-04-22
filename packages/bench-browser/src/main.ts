@@ -21,7 +21,6 @@ type Payload = {
 type Header = {
   alg?: string;
   kid?: string;
-  typ?: string;
 };
 
 const $ = (id: string): HTMLElement => {
@@ -70,8 +69,16 @@ async function boot(): Promise<void> {
       void run(circuit, verified, payload);
     });
   } catch (e) {
-    log(`ERROR: ${e instanceof Error ? e.message : String(e)}`);
-    setTokenInfoError(e);
+    const msg = e instanceof Error ? e.message : String(e);
+    log(`ERROR: ${msg}`);
+    const list = $("token-info-list");
+    list.innerHTML = "";
+    const dt = document.createElement("dt");
+    dt.textContent = "error";
+    const dd = document.createElement("dd");
+    dd.textContent = msg;
+    list.appendChild(dt);
+    list.appendChild(dd);
   }
 }
 
@@ -185,8 +192,6 @@ function renderTokenInfo(
     const sec = delta % 60;
     return ` (in ${min}m ${sec}s)`;
   };
-  const truncMid = (s: string, head = 16, tail = 8) =>
-    s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`;
 
   list.innerHTML = "";
   const rows: [string, string][] = [
@@ -292,17 +297,6 @@ function appendCommitment(
   list.appendChild(block);
 }
 
-function setTokenInfoError(e: unknown): void {
-  const list = $("token-info-list");
-  list.innerHTML = "";
-  const dt = document.createElement("dt");
-  dt.textContent = "error";
-  const dd = document.createElement("dd");
-  dd.textContent = e instanceof Error ? e.message : String(e);
-  list.appendChild(dt);
-  list.appendChild(dd);
-}
-
 type Check = {
   ok: "ok" | "warn" | "fail";
   label: string;
@@ -348,10 +342,17 @@ function renderVerifierRun(stamp: string, checks: readonly Check[]): void {
   verifier.insertBefore(block, verifier.firstChild);
 }
 
+// Local toHex (rather than importing from @singpass-zk/rp's b64.ts) because
+// b64.ts uses Buffer; even with vite-plugin-node-polyfills it's wasteful
+// to drag the polyfill in just for hex.
 function toHex(b: Uint8Array): string {
   let s = "";
   for (const x of b) s += x.toString(16).padStart(2, "0");
   return s;
+}
+
+function truncMid(s: string, head = 16, tail = 8): string {
+  return s.length <= head + tail + 1 ? s : `${s.slice(0, head)}…${s.slice(-tail)}`;
 }
 
 void boot();

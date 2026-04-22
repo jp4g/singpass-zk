@@ -3,6 +3,9 @@
 # ----- Stage 1: nargo + compile circuit -----
 FROM ubuntu:22.04 AS circuit-builder
 
+# Keep in sync with circuit/Nargo.toml's required compiler version (and
+# README.md's noirup hint). UltraHonk in @aztec/bb.js 4.2.0 + noir_js
+# 1.0.0-beta.20 require this nargo build.
 ARG NARGO_VERSION=1.0.0-beta.20
 
 RUN apt-get update \
