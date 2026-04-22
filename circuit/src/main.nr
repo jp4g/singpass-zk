@@ -3,14 +3,8 @@ use json_parser::JSON1kb;
 use sha256::sha256_var;
 use base64::BASE64_URL_DECODER;
 
-// Upper bounds for signing input + derived lengths. signing_input is
-// base64url(header) + "." + base64url(payload). Observed MockPass sample ~617
-// bytes; bump if production exceeds.
 global MAX_SIGNING_INPUT: u32 = 768;
-// Biggest possible payload_b64 tail. Bounded by signing input minus the
-// smallest realistic header_b64 minus the "." separator.
 global MAX_PAYLOAD_B64: u32 = 720;
-// Base64url-no-pad: decoded_len = floor(input_len * 3 / 4).
 global MAX_PAYLOAD_BYTES: u32 = 540;
 
 global MAX_KEY_LEN: u32 = 16;
@@ -19,45 +13,41 @@ global MAX_AUD_LEN: u32 = 64;
 global MAX_NONCE_LEN: u32 = 64;
 global MAX_SUB_LEN: u32 = 64;
 
+// Public outputs. iss/aud/nonce no longer exposed - they are pinned by the
+// equality checks against expected public inputs. sub and exp stay for
+// app-level consumption.
 pub struct Claims {
-    iss: BoundedVec<u8, MAX_ISS_LEN>,
-    aud: BoundedVec<u8, MAX_AUD_LEN>,
-    exp: u64,
-    nonce: BoundedVec<u8, MAX_NONCE_LEN>,
     sub: BoundedVec<u8, MAX_SUB_LEN>,
+    exp: u64,
 }
 
-// Verify a Singpass OIDC ID token's inner JWS signature, then extract the
-// must-check claims from the payload.
+// Verify a Singpass OIDC ID token AND enforce the standard claim checks:
+//   - iss   == expected_iss
+//   - aud   == expected_aud
+//   - nonce == expected_nonce
+//   - exp   > now
 //
-// Binding chain:
-//   signing_input bytes  -(sha256_var)->  message_hash  -(ECDSA)->  signature
-//                  |
-//                  +-> payload_b64 tail -(base64url decode)-> payload JSON
-//                                                             |
-//                                                             +-> claims
+// Binding chain (see previous commit):
+//   signing_input bytes -> sha256_var -> message_hash -> ECDSA -> signature
+//                       \-> payload_b64 tail -> base64url decode -> JSON parse -> claims
 //
-// Every piece is now constrained in-circuit. A prover cannot substitute
-// signing_input, payload_b64, or the decoded payload without failing one of
-// the constraints above.
-//
-// Remaining Phase-3 gaps (not blockers):
-//   - Claims are exposed but not yet CHECKED (iss == expected, aud == our
-//     client_id, exp > now, nonce == challenge).
-//   - sub is exposed raw rather than as a salted commitment / nullifier.
+// Still Phase 3: sub exposed raw instead of as a per-app commitment / nullifier.
 fn main(
     pubkey_x: pub [u8; 32],
     pubkey_y: pub [u8; 32],
+    expected_iss: pub BoundedVec<u8, MAX_ISS_LEN>,
+    expected_aud: pub BoundedVec<u8, MAX_AUD_LEN>,
+    expected_nonce: pub BoundedVec<u8, MAX_NONCE_LEN>,
+    now: pub u64,
     signature: [u8; 64],
     signing_input: [u8; MAX_SIGNING_INPUT],
     signing_input_len: u32,
-    // byte offset of the "." between base64url(header) and base64url(payload)
     header_b64_len: u32,
 ) -> pub Claims {
-    // 1. Assert the period separator is where the RP claims it is.
+    // 1. Assert the period separator is where the caller claims it is.
     assert(signing_input[header_b64_len] == 0x2E);
 
-    // 2. SHA-256 the signing_input bytes in-circuit (variable length).
+    // 2. SHA-256 in-circuit.
     let message_hash: [u8; 32] = sha256_var(signing_input, signing_input_len);
 
     // 3. ECDSA over the computed digest.
@@ -68,8 +58,7 @@ fn main(
         message_hash,
     ));
 
-    // 4. Extract payload_b64 (signing_input[header_b64_len+1 .. signing_input_len])
-    //    into a fixed-capacity BoundedVec.
+    // 4. Extract payload_b64 from signing_input.
     let payload_b64_len = signing_input_len - header_b64_len - 1;
     let mut payload_b64_storage: [u8; MAX_PAYLOAD_B64] = [0; MAX_PAYLOAD_B64];
     let payload_b64_start = header_b64_len + 1;
@@ -83,12 +72,11 @@ fn main(
     let payload_b64: BoundedVec<u8, MAX_PAYLOAD_B64> =
         BoundedVec::from_parts_unchecked(payload_b64_storage, payload_b64_len);
 
-    // 5. Base64url-no-pad decode -> raw payload JSON bytes.
+    // 5. Base64url-no-pad decode.
     let payload_bv: BoundedVec<u8, MAX_PAYLOAD_BYTES> =
         BASE64_URL_DECODER::decode_var(payload_b64);
 
-    // 6. Convert to fixed-size array with JSON-whitespace padding beyond len
-    //    so the parser's scanner doesn't choke on trailing zeros.
+    // 6. Space-pad for the JSON scanner.
     let mut payload: [u8; MAX_PAYLOAD_BYTES] = [0x20; MAX_PAYLOAD_BYTES];
     for i in 0..MAX_PAYLOAD_BYTES {
         if (i as u32) < payload_bv.len() {
@@ -96,15 +84,25 @@ fn main(
         }
     }
 
-    // 7. Parse JSON and extract claims.
+    // 7. Parse + extract.
     let json: JSON1kb = JSON1kb::parse_json(payload);
-    Claims {
-        iss: json.get_string_from_path([key_vec("iss")]).unwrap(),
-        aud: json.get_string_from_path([key_vec("aud")]).unwrap(),
-        exp: json.get_number_from_path([key_vec("exp")]).unwrap(),
-        nonce: json.get_string_from_path([key_vec("nonce")]).unwrap(),
-        sub: json.get_string_from_path([key_vec("sub")]).unwrap(),
-    }
+    let iss: BoundedVec<u8, MAX_ISS_LEN> =
+        json.get_string_from_path([key_vec("iss")]).unwrap();
+    let aud: BoundedVec<u8, MAX_AUD_LEN> =
+        json.get_string_from_path([key_vec("aud")]).unwrap();
+    let exp: u64 = json.get_number_from_path([key_vec("exp")]).unwrap();
+    let nonce: BoundedVec<u8, MAX_NONCE_LEN> =
+        json.get_string_from_path([key_vec("nonce")]).unwrap();
+    let sub: BoundedVec<u8, MAX_SUB_LEN> =
+        json.get_string_from_path([key_vec("sub")]).unwrap();
+
+    // 8. Enforce claim checks.
+    assert(bv_eq(iss, expected_iss), "iss mismatch");
+    assert(bv_eq(aud, expected_aud), "aud mismatch");
+    assert(bv_eq(nonce, expected_nonce), "nonce mismatch");
+    assert(exp > now, "token expired");
+
+    Claims { sub, exp }
 }
 
 fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
@@ -114,4 +112,18 @@ fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
         storage[i] = bytes[i];
     }
     BoundedVec::from_parts_unchecked(storage, N)
+}
+
+// Length-aware byte equality. BoundedVec's built-in Eq compares ALL storage
+// bytes including the tail beyond `len`, which would require callers to
+// zero-pad identically. This compares only the first `len` bytes and the
+// lengths themselves.
+fn bv_eq<let N: u32>(a: BoundedVec<u8, N>, b: BoundedVec<u8, N>) -> bool {
+    let mut eq: bool = a.len() == b.len();
+    for i in 0..N {
+        let in_range = (i as u32) < a.len();
+        let byte_eq = a.get_unchecked(i) == b.get_unchecked(i);
+        eq = eq & (!in_range | byte_eq);
+    }
+    eq
 }
