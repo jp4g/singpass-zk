@@ -5,3 +5,7 @@ authors = [""]
 compiler_version = ">=1.0.0"
 
 [dependencies]
+# jp4g fork of noir-lang/noir_json_parser. Pins to main HEAD + get_number_from_path
+# (upstream PR https://github.com/noir-lang/noir_json_parser/pull/98). Swap back to
+# the upstream tag once that PR is merged and released.
+json_parser = { git = "https://github.com/jp4g/noir_json_parser", tag = "v0.5.0-pr98" }

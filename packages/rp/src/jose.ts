@@ -28,6 +28,7 @@ export type VerifiedIdToken = {
   jwsCompact: string;
   header: Record<string, unknown>;
   payload: Record<string, unknown>;
+  payloadBytes: Uint8Array;
   signingInput: Uint8Array;
   messageHash: Uint8Array;
   signature64: Uint8Array;
@@ -99,7 +100,8 @@ export async function decryptAndVerify(
   // Off-circuit sanity verify.
   const verifyKey = await importJWK(issuerJwk, "ES256");
   const verified = await compactVerify(jwsCompact, verifyKey);
-  const payload = JSON.parse(fromUtf8(verified.payload)) as Record<
+  const payloadBytes = new Uint8Array(verified.payload);
+  const payload = JSON.parse(fromUtf8(payloadBytes)) as Record<
     string,
     unknown
   >;
@@ -134,6 +136,7 @@ export async function decryptAndVerify(
     jwsCompact,
     header,
     payload,
+    payloadBytes,
     signingInput,
     messageHash,
     signature64: sig,

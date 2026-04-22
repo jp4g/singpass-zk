@@ -1,0 +1,12 @@
+diff --git a/lib/express/fapi/fapi.service.js b/lib/express/fapi/fapi.service.js
+--- a/lib/express/fapi/fapi.service.js
++++ b/lib/express/fapi/fapi.service.js
+@@ -140,7 +140,7 @@
+       amr: ['pwd'],
+       iss: FapiUtils.getFapiOpenIdConfiguration(req).issuer,
+       exp: Math.floor(Date.now() / 1000) + expires_in,
+-      iat: Date.now() / 1000,
++      iat: Math.floor(Date.now() / 1000),
+       nonce: authRequest.nonce,
+     }
+

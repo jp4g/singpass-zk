@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
 import { REPO_ROOT, OUT_DIR } from "@singpass-zk/driver/src/paths.ts";
+import { MAX_PAYLOAD_BYTES } from "./dump.ts";
 
 const CIRCUIT_JSON = resolve(REPO_ROOT, "circuit/target/singpass_zk.json");
 
@@ -17,6 +18,10 @@ async function readHex(name: string): Promise<number[]> {
     out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
   return out;
+}
+
+async function readBytes(name: string): Promise<Uint8Array> {
+  return new Uint8Array(await readFile(resolve(OUT_DIR, name)));
 }
 
 async function requireCompiledCircuit(): Promise<CompiledCircuit> {
@@ -36,19 +41,32 @@ async function main() {
   const pubkey_y = await readHex("pubkey.y.hex");
   const message_hash = await readHex("signing_input.hash.hex");
   const signature = await readHex("signature.64.hex");
+  const paddedPayload = await readBytes("payload.padded.bin");
 
   if (pubkey_x.length !== 32) throw new Error("pubkey_x must be 32 bytes");
   if (pubkey_y.length !== 32) throw new Error("pubkey_y must be 32 bytes");
   if (message_hash.length !== 32) throw new Error("message_hash must be 32 bytes");
   if (signature.length !== 64) throw new Error("signature must be 64 bytes");
+  if (paddedPayload.length !== MAX_PAYLOAD_BYTES) {
+    throw new Error(
+      `paddedPayload length ${paddedPayload.length} != ${MAX_PAYLOAD_BYTES}`,
+    );
+  }
 
-  const inputs = { pubkey_x, pubkey_y, message_hash, signature };
+  const inputs = {
+    pubkey_x,
+    pubkey_y,
+    message_hash,
+    signature,
+    payload: Array.from(paddedPayload),
+  };
 
   console.log("1. Witness generation (noir_js)");
   const noir = new Noir(circuit);
   const tWit = performance.now();
-  const { witness } = await noir.execute(inputs);
+  const { witness, returnValue } = await noir.execute(inputs);
   console.log(`   witness solved in ${((performance.now() - tWit) / 1000).toFixed(2)}s`);
+  console.log(`   claims_digest = ${returnValue}`);
 
   console.log("2. Backend init (UltraHonk)");
   const api = await Barretenberg.new({ threads: 8 });
@@ -72,8 +90,8 @@ async function main() {
     ).toFixed(2)}s`,
   );
 
-  // Public inputs are pubkey_x (32) + pubkey_y (32) + message_hash (32) = 96.
-  const expectedPublicInputs = 32 + 32 + 32;
+  // Public inputs: pubkey_x(32) + pubkey_y(32) + message_hash(32) + claims_digest(1) = 97.
+  const expectedPublicInputs = 32 + 32 + 32 + 1;
   if (publicInputs.length !== expectedPublicInputs) {
     console.warn(
       `   WARN: expected ${expectedPublicInputs} public inputs, got ${publicInputs.length}`,
