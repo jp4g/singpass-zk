@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { RP_PRIVATE_JWKS, RP_PUBLIC_JWKS, ASP_PUBLIC_JWKS } from "./paths.ts";
+import { RP_PRIVATE_JWKS } from "./paths.ts";
 
 export type Jwk = {
   kty: string;
@@ -15,21 +15,9 @@ export type Jwk = {
 
 export type Jwks = { keys: Jwk[] };
 
-async function readJwks(path: string): Promise<Jwks> {
-  const raw = await readFile(path, "utf8");
-  return JSON.parse(raw) as Jwks;
-}
-
 export async function loadRpPrivateJwks(): Promise<Jwks> {
-  return readJwks(RP_PRIVATE_JWKS);
-}
-
-export async function loadRpPublicJwks(): Promise<Jwks> {
-  return readJwks(RP_PUBLIC_JWKS);
-}
-
-export async function loadAspPublicJwks(): Promise<Jwks> {
-  return readJwks(ASP_PUBLIC_JWKS);
+  const raw = await readFile(RP_PRIVATE_JWKS, "utf8");
+  return JSON.parse(raw) as Jwks;
 }
 
 export function pickByUse(jwks: Jwks, use: "sig" | "enc"): Jwk {

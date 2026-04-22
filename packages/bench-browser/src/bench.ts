@@ -47,7 +47,7 @@ export async function runBenchmark(opts: BenchOpts): Promise<BenchResult> {
       log(`iter ${i}/${iterations}`);
 
       const wStart = performance.now();
-      const { witness } = await prover.executeWitness(verified);
+      const witness = await prover.executeWitness(verified);
       const wMs = performance.now() - wStart;
       witnessMs.push(wMs);
       log(`  witness: ${wMs.toFixed(0)} ms`);

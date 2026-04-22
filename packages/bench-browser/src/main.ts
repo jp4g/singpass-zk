@@ -4,24 +4,11 @@ import {
   deserialize,
   type VerifiedIdTokenDto,
   type VerifiedIdToken,
+  type IdTokenHeader,
+  type IdTokenPayload,
 } from "@singpass-zk/rp/browser";
 import type { CompiledCircuit } from "@noir-lang/noir_js";
 import { runBenchmark } from "./bench";
-
-type Payload = {
-  iss: string;
-  aud: string;
-  nonce: string;
-  sub: string;
-  exp: number;
-  iat?: number;
-  nbf?: number;
-};
-
-type Header = {
-  alg?: string;
-  kid?: string;
-};
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -56,8 +43,7 @@ async function boot(): Promise<void> {
     }
     const dto = (await oidcRes.json()) as VerifiedIdTokenDto;
     const verified = deserialize(dto);
-    const payload = verified.payload as Payload;
-    const header = verified.header as Header;
+    const { payload, header } = verified;
 
     renderTokenInfo(verified, payload, header);
     renderExpectedCommitments(verified, payload);
@@ -85,7 +71,7 @@ async function boot(): Promise<void> {
 async function run(
   circuit: CompiledCircuit,
   verified: VerifiedIdToken,
-  payload: Payload,
+  payload: IdTokenPayload,
 ): Promise<void> {
   const runBtn = $("run") as HTMLButtonElement;
   runBtn.disabled = true;
@@ -179,8 +165,8 @@ async function run(
 
 function renderTokenInfo(
   v: VerifiedIdToken,
-  payload: Payload,
-  header: Header,
+  payload: IdTokenPayload,
+  header: IdTokenHeader,
 ): void {
   const list = $("token-info-list");
   const fmtTs = (s: number) =>
@@ -221,7 +207,7 @@ function renderTokenInfo(
 
 function renderExpectedCommitments(
   v: VerifiedIdToken,
-  payload: Payload,
+  payload: IdTokenPayload,
 ): void {
   const list = $("commitments-list");
   list.innerHTML = "";

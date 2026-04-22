@@ -29,13 +29,7 @@ test(
   "e2e: OIDC flow -> witness -> UltraHonk prove -> verify -> outputs match oracle",
   async () => {
     const verified = await runOidcFlow();
-    const payload = verified.payload as {
-      iss: string;
-      aud: string;
-      exp: number;
-      nonce: string;
-      sub: string;
-    };
+    const { payload } = verified;
 
     const { proof, publicInputs, publicOutputs } = await prover.prove(verified);
     expect(proof.byteLength).toBeGreaterThan(0);

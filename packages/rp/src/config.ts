@@ -13,10 +13,8 @@ export const MOCK_UUID =
   process.env.MOCK_UUID ?? "a9865837-7bd7-46ac-bef4-42a76a946424";
 
 export const Endpoints = {
-  base: FAPI_BASE,
   discovery: DISCOVERY_URL,
   par: `${FAPI_BASE}/par`,
-  auth: `${FAPI_BASE}/auth`,
   authCustomProfile: `${FAPI_BASE}/auth/custom-profile`,
   token: `${FAPI_BASE}/token`,
   jwks: `${FAPI_BASE}/.well-known/keys`,

@@ -3,16 +3,6 @@ import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
 import type { VerifiedIdToken } from "./jose.ts";
 import { MAX_SIGNING_INPUT } from "./constants.ts";
 
-// Shape of the witness inputs for circuit/src/main.nr.
-export type CircuitInputs = {
-  pubkey_x: number[];
-  pubkey_y: number[];
-  signature: number[];
-  signing_input: number[];
-  signing_input_len: string;
-  header_b64_len: string;
-};
-
 export type PublicOutputs = {
   keyHash: bigint;
   issAudHash: bigint;
@@ -28,19 +18,14 @@ export type ProveResult = {
 
 const PUBLIC_OUTPUT_COUNT = 4;
 
-// Build circuit witness inputs from a verified ID token.
-export function buildCircuitInputs(v: VerifiedIdToken): CircuitInputs {
+// Shape circuit witness inputs from a verified ID token. Internal to the
+// proving path; callers go through SingpassProver.
+function buildCircuitInputs(v: VerifiedIdToken) {
   if (v.signingInput.length >= MAX_SIGNING_INPUT) {
     throw new Error(
       `signing_input length ${v.signingInput.length} >= MAX_SIGNING_INPUT ${MAX_SIGNING_INPUT}. ` +
         `Bump MAX_SIGNING_INPUT in circuit/src/constants.nr and packages/rp/src/constants.ts.`,
     );
-  }
-  if (v.pubX.length !== 32 || v.pubY.length !== 32) {
-    throw new Error("pubkey coords must be 32 bytes each");
-  }
-  if (v.signature64.length !== 64) {
-    throw new Error("signature must be 64 bytes");
   }
 
   const padded = new Uint8Array(MAX_SIGNING_INPUT);
@@ -105,8 +90,7 @@ export class SingpassProver {
   // Convenience: full prove path. Use the split methods below if you want
   // to time witness gen separately from proof gen (e.g. in benchmarks).
   async prove(verified: VerifiedIdToken): Promise<ProveResult> {
-    this.assertOpen();
-    const { witness } = await this.executeWitness(verified);
+    const witness = await this.executeWitness(verified);
     const { proof, publicInputs } = await this.generateProofFromWitness(witness);
     return {
       proof,
@@ -115,13 +99,10 @@ export class SingpassProver {
     };
   }
 
-  async executeWitness(
-    verified: VerifiedIdToken,
-  ): Promise<{ witness: Uint8Array; inputs: CircuitInputs }> {
+  async executeWitness(verified: VerifiedIdToken): Promise<Uint8Array> {
     this.assertOpen();
-    const inputs = buildCircuitInputs(verified);
-    const { witness } = await this.noir.execute(inputs);
-    return { witness, inputs };
+    const { witness } = await this.noir.execute(buildCircuitInputs(verified));
+    return witness;
   }
 
   async generateProofFromWitness(

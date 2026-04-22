@@ -8,26 +8,20 @@
 
 export {
   SingpassProver,
-  buildCircuitInputs,
   parsePublicOutputs,
-  type CircuitInputs,
   type ProveResult,
   type PublicOutputs,
 } from "./prove.ts";
 export {
   expectedKeyHash,
   expectedIssAudHash,
-  expectedNullifier,
 } from "./hashes.ts";
-export type { VerifiedIdToken } from "./jose.ts";
+export type {
+  VerifiedIdToken,
+  IdTokenHeader,
+  IdTokenPayload,
+} from "./jose.ts";
 export {
   deserialize,
   type VerifiedIdTokenDto,
 } from "./dto.ts";
-export {
-  MAX_SIGNING_INPUT,
-  MAX_ISS_LEN,
-  MAX_AUD_LEN,
-  MAX_NONCE_LEN,
-  MAX_SUB_LEN,
-} from "./constants.ts";

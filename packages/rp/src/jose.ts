@@ -1,120 +1,86 @@
-import { compactDecrypt, importJWK, compactVerify } from "jose";
-import { createHash } from "node:crypto";
-import { b64urlDecode, utf8, fromUtf8, toHex } from "./b64.ts";
+import { compactDecrypt, compactVerify, importJWK } from "jose";
+import { b64urlDecode, fromUtf8, toHex, utf8 } from "./b64.ts";
 import type { Jwk } from "@singpass-zk/driver/src/keys.ts";
 
-// P-256 curve order n. Used for s-low normalization.
-// secp256r1 / prime256v1 / P-256 order:
+// secp256r1 / prime256v1 / P-256 group order. Used for s-low normalization.
 const P256_N =
   0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 
-export type JwePartsB64u = {
-  header: string;
-  encryptedKey: string;
-  iv: string;
-  ciphertext: string;
-  tag: string;
-};
-
-export type JwsPartsB64u = {
+type JwsPartsB64u = {
   header: string;
   payload: string;
   signature: string;
 };
 
+export type IdTokenHeader = {
+  alg?: string;
+  kid?: string;
+  typ?: string;
+};
+
+// Subset of the Singpass FAPI ID token claims the circuit reads. Other
+// claims (iat, nbf, acr, ...) may be present; we don't surface them.
+export type IdTokenPayload = {
+  iss: string;
+  aud: string;
+  sub: string;
+  exp: number;
+  nonce: string;
+};
+
 export type VerifiedIdToken = {
-  jwe: JwePartsB64u;
   jws: JwsPartsB64u;
-  jwsCompact: string;
-  header: Record<string, unknown>;
-  payload: Record<string, unknown>;
-  payloadBytes: Uint8Array;
+  header: IdTokenHeader;
+  payload: IdTokenPayload;
+  // Bytes the circuit's SHA-256 covers: `${jws.header}.${jws.payload}` UTF-8.
   signingInput: Uint8Array;
-  messageHash: Uint8Array;
+  // Raw r||s, each 32 bytes big-endian, normalized to low-s.
   signature64: Uint8Array;
-  r: Uint8Array;
-  s: Uint8Array;
-  issuerJwk: Jwk;
+  // Issuer signing key uncompressed coords, 32 bytes each.
   pubX: Uint8Array;
   pubY: Uint8Array;
 };
-
-export function splitJweCompact(jwe: string): JwePartsB64u {
-  const parts = jwe.split(".");
-  if (parts.length !== 5) {
-    throw new Error(`expected 5-part JWE, got ${parts.length}`);
-  }
-  const [header, encryptedKey, iv, ciphertext, tag] = parts as [
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
-  return { header, encryptedKey, iv, ciphertext, tag };
-}
-
-export function splitJwsCompact(jws: string): JwsPartsB64u {
-  const parts = jws.split(".");
-  if (parts.length !== 3) {
-    throw new Error(`expected 3-part JWS, got ${parts.length}`);
-  }
-  const [header, payload, signature] = parts as [string, string, string];
-  return { header, payload, signature };
-}
 
 export async function decryptAndVerify(
   idTokenJwe: string,
   rpEncPrivateJwk: Jwk,
   issuerJwks: { keys: Jwk[] },
 ): Promise<VerifiedIdToken> {
-  const jweParts = splitJweCompact(idTokenJwe);
-
   const encKey = await importJWK(rpEncPrivateJwk);
   const { plaintext } = await compactDecrypt(idTokenJwe, encKey);
-  // The decrypted plaintext is the inner compact JWS (string bytes).
   const jwsCompact = fromUtf8(plaintext);
-  const jwsParts = splitJwsCompact(jwsCompact);
+  const jws = splitJwsCompact(jwsCompact);
 
-  // Decode JWS header to find kid, then pick the matching key.
   const header = JSON.parse(
-    fromUtf8(b64urlDecode(jwsParts.header)),
-  ) as Record<string, unknown>;
-
-  const kid = header["kid"];
-  const alg = header["alg"];
-  if (alg !== "ES256") {
-    throw new Error(`expected alg=ES256, got ${alg}`);
+    fromUtf8(b64urlDecode(jws.header)),
+  ) as IdTokenHeader;
+  if (header.alg !== "ES256") {
+    throw new Error(`expected alg=ES256, got ${header.alg}`);
   }
-  const issuerJwk = issuerJwks.keys.find((k) => k.kid === kid && k.use === "sig");
+
+  const issuerJwk = issuerJwks.keys.find(
+    (k) => k.kid === header.kid && k.use === "sig",
+  );
   if (!issuerJwk) {
-    throw new Error(`no issuer signing JWK found with kid=${String(kid)}`);
+    throw new Error(`no issuer signing JWK found with kid=${header.kid}`);
   }
   if (issuerJwk.crv !== "P-256") {
     throw new Error(`expected crv=P-256 JWK, got ${issuerJwk.crv}`);
   }
 
-  // Off-circuit sanity verify.
+  // Off-circuit signature verification — fast-fail before we shape circuit
+  // inputs. The circuit re-verifies in-circuit; this is defense-in-depth
+  // and gives a clear error for malformed JWS.
   const verifyKey = await importJWK(issuerJwk, "ES256");
-  const verified = await compactVerify(jwsCompact, verifyKey);
-  const payloadBytes = new Uint8Array(verified.payload);
-  const payload = JSON.parse(fromUtf8(payloadBytes)) as Record<
-    string,
-    unknown
-  >;
+  const { payload: payloadBytes } = await compactVerify(jwsCompact, verifyKey);
+  const payload = JSON.parse(
+    fromUtf8(new Uint8Array(payloadBytes)),
+  ) as IdTokenPayload;
 
-  // Build exactly the bytes the circuit will hash.
-  const signingInput = utf8(`${jwsParts.header}.${jwsParts.payload}`);
-  const messageHash = new Uint8Array(
-    createHash("sha256").update(signingInput).digest(),
-  );
-
-  // JOSE signature for ES256 is already raw r||s, each 32 bytes big-endian.
-  const signature64Raw = b64urlDecode(jwsParts.signature);
+  const signature64Raw = b64urlDecode(jws.signature);
   if (signature64Raw.length !== 64) {
     throw new Error(`expected 64-byte signature, got ${signature64Raw.length}`);
   }
-  const { sig, r, s } = normalizeSLow(signature64Raw);
 
   const pubX = b64urlDecode(issuerJwk.x!);
   const pubY = b64urlDecode(issuerJwk.y!);
@@ -125,44 +91,40 @@ export async function decryptAndVerify(
   }
 
   return {
-    jwe: jweParts,
-    jws: jwsParts,
-    jwsCompact,
+    jws,
     header,
     payload,
-    payloadBytes,
-    signingInput,
-    messageHash,
-    signature64: sig,
-    r,
-    s,
-    issuerJwk,
+    signingInput: utf8(`${jws.header}.${jws.payload}`),
+    signature64: normalizeSLow(signature64Raw),
     pubX,
     pubY,
   };
 }
 
-function normalizeSLow(sig: Uint8Array): {
-  sig: Uint8Array;
-  r: Uint8Array;
-  s: Uint8Array;
-} {
+function splitJwsCompact(jws: string): JwsPartsB64u {
+  const parts = jws.split(".");
+  if (parts.length !== 3) {
+    throw new Error(`expected 3-part JWS, got ${parts.length}`);
+  }
+  const [header, payload, signature] = parts as [string, string, string];
+  return { header, payload, signature };
+}
+
+// Normalize an ECDSA P-256 signature to low-s form. Some signers (notably
+// MockPass) produce high-s signatures that are valid per RFC 6979 but get
+// rejected by strict verifiers. The Noir circuit's verifier follows
+// secp256r1's strict-low-s rule, so we normalize off-circuit.
+function normalizeSLow(sig: Uint8Array): Uint8Array {
   const r = sig.slice(0, 32);
   let s = sig.slice(32, 64);
-  const sBig = bytesToBigInt(s);
-  const halfN = P256_N / 2n;
-  if (sBig > halfN) {
-    const sLow = P256_N - sBig;
-    s = bigIntTo32Bytes(sLow);
+  const sBig = BigInt("0x" + toHex(s));
+  if (sBig > P256_N / 2n) {
+    s = bigIntTo32Bytes(P256_N - sBig);
   }
   const out = new Uint8Array(64);
   out.set(r, 0);
   out.set(s, 32);
-  return { sig: out, r, s };
-}
-
-function bytesToBigInt(b: Uint8Array): bigint {
-  return BigInt("0x" + toHex(b));
+  return out;
 }
 
 function bigIntTo32Bytes(n: bigint): Uint8Array {
