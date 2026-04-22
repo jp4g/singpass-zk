@@ -4,11 +4,11 @@ import { resolve } from "node:path";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
 import { REPO_ROOT, OUT_DIR } from "@singpass-zk/driver/src/paths.ts";
-import { MAX_PAYLOAD_BYTES } from "./dump.ts";
+import { MAX_SIGNING_INPUT } from "./dump.ts";
 
 const CIRCUIT_JSON = resolve(REPO_ROOT, "circuit/target/singpass_zk.json");
 
-// Must mirror the `MAX_*_LEN` globals in circuit/src/main.nr.
+// Must mirror the MAX_*_LEN globals in circuit/src/main.nr.
 const MAX_ISS_LEN = 64;
 const MAX_AUD_LEN = 64;
 const MAX_NONCE_LEN = 64;
@@ -45,18 +45,14 @@ async function requireCompiledCircuit(): Promise<CompiledCircuit> {
   return JSON.parse(raw) as CompiledCircuit;
 }
 
-// Decode a run of bytes-as-Field-hex-strings into a Uint8Array.
 function fieldsToBytes(fields: readonly string[]): Uint8Array {
   const out = new Uint8Array(fields.length);
   for (let i = 0; i < fields.length; i++) {
-    // Each field element is a 0x-prefixed hex string; for u8 it fits in one byte.
     out[i] = Number(BigInt(fields[i] ?? "0") & 0xffn);
   }
   return out;
 }
 
-// Compare two byte arrays up to `len` of `actual`, and require the remaining
-// bytes in `actual` to be zero (padding).
 function assertPadded(
   label: string,
   actual: Uint8Array,
@@ -65,7 +61,7 @@ function assertPadded(
   const n = expected.length;
   if (actual.length < n) {
     throw new Error(
-      `${label}: expected ${n} bytes of data but circuit output has capacity ${actual.length}`,
+      `${label}: expected ${n} bytes but circuit output has capacity ${actual.length}`,
     );
   }
   for (let i = 0; i < n; i++) {
@@ -92,35 +88,44 @@ type PayloadClaims = {
   sub: string;
 };
 
+type SigningInputMeta = {
+  signing_input_len: number;
+  header_b64_len: number;
+  payload_b64_len: number;
+};
+
 async function main() {
   const circuit = await requireCompiledCircuit();
 
   const pubkey_x = await readHex("pubkey.x.hex");
   const pubkey_y = await readHex("pubkey.y.hex");
-  const message_hash = await readHex("signing_input.hash.hex");
   const signature = await readHex("signature.64.hex");
-  const paddedPayload = await readBytes("payload.padded.bin");
+  const signing_input = await readBytes("signing_input.padded.bin");
+  const meta = await readJson<SigningInputMeta>("signing_input.meta.json");
   const expected = await readJson<PayloadClaims>("jws.payload.json");
 
   if (pubkey_x.length !== 32) throw new Error("pubkey_x must be 32 bytes");
   if (pubkey_y.length !== 32) throw new Error("pubkey_y must be 32 bytes");
-  if (message_hash.length !== 32) throw new Error("message_hash must be 32 bytes");
   if (signature.length !== 64) throw new Error("signature must be 64 bytes");
-  if (paddedPayload.length !== MAX_PAYLOAD_BYTES) {
+  if (signing_input.length !== MAX_SIGNING_INPUT) {
     throw new Error(
-      `paddedPayload length ${paddedPayload.length} != ${MAX_PAYLOAD_BYTES}`,
+      `signing_input length ${signing_input.length} != ${MAX_SIGNING_INPUT}`,
     );
   }
 
   const inputs = {
     pubkey_x,
     pubkey_y,
-    message_hash,
     signature,
-    payload: Array.from(paddedPayload),
+    signing_input: Array.from(signing_input),
+    signing_input_len: meta.signing_input_len.toString(),
+    header_b64_len: meta.header_b64_len.toString(),
   };
 
   console.log("1. Witness generation (noir_js)");
+  console.log(
+    `   signing_input_len=${meta.signing_input_len}  header_b64_len=${meta.header_b64_len}  payload_b64_len=${meta.payload_b64_len}`,
+  );
   const noir = new Noir(circuit);
   const tWit = performance.now();
   const { witness } = await noir.execute(inputs);
@@ -156,40 +161,39 @@ async function main() {
   process.exit(ok ? 0 : 1);
 }
 
-// Public input layout (from circuit ABI, in declaration order):
-//   pubkey_x     : [u8; 32]                   — 32 Fields
-//   pubkey_y     : [u8; 32]                   — 32 Fields
-//   message_hash : [u8; 32]                   — 32 Fields
-//   Claims { iss, aud, exp, nonce, sub } return:
-//     iss   : BoundedVec<u8, 64>              — 64 storage + 1 len = 65 Fields
-//     aud   : BoundedVec<u8, 64>              — 65 Fields
-//     exp   : u64                             — 1 Field
-//     nonce : BoundedVec<u8, 64>              — 65 Fields
-//     sub   : BoundedVec<u8, 64>              — 65 Fields
-// Total: 32 + 32 + 32 + 65*4 + 1 = 357.
+// Public input layout (declaration order):
+//   pubkey_x : [u8; 32]   — 32 Fields
+//   pubkey_y : [u8; 32]   — 32 Fields
+//   Claims return:
+//     iss   : BoundedVec<u8, 64>  — 65 Fields
+//     aud   : BoundedVec<u8, 64>  — 65 Fields
+//     exp   : u64                 — 1 Field
+//     nonce : BoundedVec<u8, 64>  — 65 Fields
+//     sub   : BoundedVec<u8, 64>  — 65 Fields
+// Total: 32 + 32 + 65*4 + 1 = 325.
 function checkClaims(
   publicInputs: readonly string[],
   expected: PayloadClaims,
 ): void {
-  const EXPECTED_PUB_INPUTS =
-    32 + 32 + 32 + (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + 1 + (MAX_NONCE_LEN + 1) + (MAX_SUB_LEN + 1);
-  if (publicInputs.length !== EXPECTED_PUB_INPUTS) {
+  const EXPECTED =
+    32 + 32 + (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + 1 + (MAX_NONCE_LEN + 1) + (MAX_SUB_LEN + 1);
+  if (publicInputs.length !== EXPECTED) {
     throw new Error(
-      `public input count ${publicInputs.length} != expected ${EXPECTED_PUB_INPUTS}`,
+      `public input count ${publicInputs.length} != expected ${EXPECTED}`,
     );
   }
 
-  let off = 96; // skip pubkey_x + pubkey_y + message_hash
+  let off = 64; // skip pubkey_x + pubkey_y
 
-  const iss = decodeBoundedVec(publicInputs, off, MAX_ISS_LEN);
+  const iss = decodeBV(publicInputs, off, MAX_ISS_LEN);
   off += MAX_ISS_LEN + 1;
-  const aud = decodeBoundedVec(publicInputs, off, MAX_AUD_LEN);
+  const aud = decodeBV(publicInputs, off, MAX_AUD_LEN);
   off += MAX_AUD_LEN + 1;
   const exp = Number(BigInt(publicInputs[off] ?? "0"));
   off += 1;
-  const nonce = decodeBoundedVec(publicInputs, off, MAX_NONCE_LEN);
+  const nonce = decodeBV(publicInputs, off, MAX_NONCE_LEN);
   off += MAX_NONCE_LEN + 1;
-  const sub = decodeBoundedVec(publicInputs, off, MAX_SUB_LEN);
+  const sub = decodeBV(publicInputs, off, MAX_SUB_LEN);
   off += MAX_SUB_LEN + 1;
 
   const enc = new TextEncoder();
@@ -199,15 +203,15 @@ function checkClaims(
   assertPadded("sub", sub.storage, enc.encode(expected.sub));
 
   if (iss.len !== expected.iss.length)
-    throw new Error(`iss_len mismatch: ${iss.len} vs ${expected.iss.length}`);
+    throw new Error(`iss_len ${iss.len} != ${expected.iss.length}`);
   if (aud.len !== expected.aud.length)
-    throw new Error(`aud_len mismatch: ${aud.len} vs ${expected.aud.length}`);
+    throw new Error(`aud_len ${aud.len} != ${expected.aud.length}`);
   if (nonce.len !== expected.nonce.length)
-    throw new Error(`nonce_len mismatch: ${nonce.len} vs ${expected.nonce.length}`);
+    throw new Error(`nonce_len ${nonce.len} != ${expected.nonce.length}`);
   if (sub.len !== expected.sub.length)
-    throw new Error(`sub_len mismatch: ${sub.len} vs ${expected.sub.length}`);
+    throw new Error(`sub_len ${sub.len} != ${expected.sub.length}`);
   if (exp !== expected.exp)
-    throw new Error(`exp mismatch: ${exp} vs ${expected.exp}`);
+    throw new Error(`exp ${exp} != ${expected.exp}`);
 
   console.log(`   iss   = "${expected.iss}"`);
   console.log(`   aud   = "${expected.aud}"`);
@@ -216,7 +220,7 @@ function checkClaims(
   console.log(`   sub   = "${expected.sub}"`);
 }
 
-function decodeBoundedVec(
+function decodeBV(
   publicInputs: readonly string[],
   offset: number,
   maxLen: number,
