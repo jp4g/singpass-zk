@@ -37,6 +37,18 @@ function packBytes(bytes: Uint8Array, maxLen: number): bigint[] {
   return out;
 }
 
+// poseidon2(pack(pubkey_x || pubkey_y)). Mirrors circuit compute_key_hash.
+function expectedKeyHash(x: Uint8Array, y: Uint8Array): bigint {
+  if (x.length !== 32 || y.length !== 32) {
+    throw new Error("pubkey coords must be 32 bytes each");
+  }
+  const concat = new Uint8Array(64);
+  concat.set(x, 0);
+  concat.set(y, 32);
+  const packed = packBytes(concat, 64);
+  return poseidon2Hash(packed);
+}
+
 // poseidon2(sub_packed || sub_len || nonce_packed || nonce_len)
 // Mirrors circuit/src/main.nr:compute_nullifier.
 function expectedNullifier(
@@ -193,31 +205,38 @@ async function main() {
     ).toFixed(2)}s`,
   );
 
-  console.log("5. Check nullifier + exp outputs match expected");
-  checkOutputs(publicInputs, expected, meta);
+  console.log("5. Check key_hash + nullifier + exp outputs match expected");
+  checkOutputs(
+    publicInputs,
+    expected,
+    meta,
+    Uint8Array.from(pubkey_x),
+    Uint8Array.from(pubkey_y),
+  );
 
   await api.destroy();
   process.exit(ok ? 0 : 1);
 }
 
 // Public inputs (in declaration order):
-//   pubkey_x        : [u8; 32]                — 32
-//   pubkey_y        : [u8; 32]                — 32
 //   expected_iss    : BoundedVec<u8, 64>      — 65
 //   expected_aud    : BoundedVec<u8, 64>      — 65
 //   expected_nonce  : BoundedVec<u8, 64>      — 65
 //   now             : u64                     — 1
 //   Claims return:
+//     key_hash  : Field                       — 1
 //     nullifier : Field                       — 1
 //     exp       : u64                         — 1
-// Total: 32 + 32 + 65*3 + 1 + 1 + 1 = 262.
+// Total: 65*3 + 1 + 1 + 1 + 1 = 199.
 function checkOutputs(
   publicInputs: readonly string[],
   expected: PayloadClaims,
   meta: SigningInputMeta,
+  pubkeyX: Uint8Array,
+  pubkeyY: Uint8Array,
 ): void {
   const EXPECTED_COUNT =
-    32 + 32 + (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + (MAX_NONCE_LEN + 1) + 1 + 1 + 1;
+    (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + (MAX_NONCE_LEN + 1) + 1 + 1 + 1 + 1;
   if (publicInputs.length !== EXPECTED_COUNT) {
     throw new Error(
       `public input count ${publicInputs.length} != expected ${EXPECTED_COUNT}`,
@@ -225,32 +244,40 @@ function checkOutputs(
   }
 
   let off = 0;
-  off += 32; // pubkey_x
-  off += 32; // pubkey_y
   off += MAX_ISS_LEN + 1;
   off += MAX_AUD_LEN + 1;
   off += MAX_NONCE_LEN + 1;
   off += 1; // now
 
+  const keyHash = BigInt(publicInputs[off] ?? "0");
+  off += 1;
   const nullifier = BigInt(publicInputs[off] ?? "0");
   off += 1;
   const exp = Number(BigInt(publicInputs[off] ?? "0"));
 
+  const expectedK = expectedKeyHash(pubkeyX, pubkeyY);
+  if (keyHash !== expectedK) {
+    throw new Error(
+      `key_hash mismatch:\n  circuit:  0x${keyHash.toString(16)}\n  expected: 0x${expectedK.toString(16)}`,
+    );
+  }
+
   const nonceBytes = new TextEncoder().encode(expected.nonce);
   const subBytes = new TextEncoder().encode(expected.sub);
   const expectedN = expectedNullifier(subBytes, subBytes.length, nonceBytes, nonceBytes.length);
-
   if (nullifier !== expectedN) {
     throw new Error(
       `nullifier mismatch:\n  circuit:  0x${nullifier.toString(16)}\n  expected: 0x${expectedN.toString(16)}`,
     );
   }
-  if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
-  if (exp <= meta.now) throw new Error(`exp <= now — shouldn't have verified`);
 
+  if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
+  if (exp <= meta.now) throw new Error(`exp <= now - shouldn't have verified`);
+
+  console.log(`   key_hash  = 0x${keyHash.toString(16)}`);
   console.log(`   nullifier = 0x${nullifier.toString(16)}`);
   console.log(`   exp       = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
-  console.log(`   (nullifier recomputed from sub + nonce off-circuit; matches)`);
+  console.log(`   (both hashes recomputed off-circuit; match)`);
 }
 
 main().catch((e) => {

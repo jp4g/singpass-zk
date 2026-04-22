@@ -22,18 +22,26 @@ global NONCE_PACKED_FIELDS: u32 = MAX_NONCE_LEN / 31 + 1;   // 3
 // Preimage layout: sub_packed || sub_len || nonce_packed || nonce_len
 global NULLIFIER_PREIMAGE_LEN: u32 = SUB_PACKED_FIELDS + 1 + NONCE_PACKED_FIELDS + 1;
 
-// Public outputs. iss / aud / nonce are pinned by the equality checks. sub
-// is no longer exposed raw - it's folded into a session-scoped nullifier
-// with the nonce, so the same user in a different OIDC session produces a
-// different handle.
+// key_hash preimage: pack(pubkey_x || pubkey_y) = 64 bytes -> 3 Fields.
+global PUBKEY_PACKED_FIELDS: u32 = 64 / 31 + 1;
+
+// Public outputs:
+//   key_hash  - poseidon2(pack(pubkey_x || pubkey_y)). Verifier checks this
+//               against the known Singpass pubkey hash (or set of hashes
+//               across rotations). pubkey_x/y themselves are private inputs.
+//   nullifier - poseidon2 over sub + nonce, a per-session identity handle.
+//   exp       - token expiry.
+// iss / aud / nonce are pinned in-circuit by equality against the expected
+// public inputs; no need to expose them in the output.
 pub struct Claims {
+    key_hash: Field,
     nullifier: Field,
     exp: u64,
 }
 
 fn main(
-    pubkey_x: pub [u8; 32],
-    pubkey_y: pub [u8; 32],
+    pubkey_x: [u8; 32],
+    pubkey_y: [u8; 32],
     expected_iss: pub BoundedVec<u8, MAX_ISS_LEN>,
     expected_aud: pub BoundedVec<u8, MAX_AUD_LEN>,
     expected_nonce: pub BoundedVec<u8, MAX_NONCE_LEN>,
@@ -94,8 +102,19 @@ fn main(
     assert(exp > now, "token expired");
 
     let nullifier = compute_nullifier(sub, expected_nonce);
+    let key_hash = compute_key_hash(pubkey_x, pubkey_y);
 
-    Claims { nullifier, exp }
+    Claims { key_hash, nullifier, exp }
+}
+
+fn compute_key_hash(x: [u8; 32], y: [u8; 32]) -> Field {
+    let mut concat: [u8; 64] = [0; 64];
+    for i in 0..32 {
+        concat[i] = x[i];
+        concat[32 + i] = y[i];
+    }
+    let packed: [Field; PUBKEY_PACKED_FIELDS] = pack_bytes(concat);
+    Poseidon2::hash(packed, PUBKEY_PACKED_FIELDS)
 }
 
 // Poseidon2 commitment over (sub_bytes, sub_len, nonce_bytes, nonce_len).
