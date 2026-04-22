@@ -87,18 +87,12 @@ function printNextSteps() {
 ====================================================================
 NEXT STEPS — Noir circuit inputs ready in ./out
 
-circuit/src/main.nr input shape (Phase 2 — SHA-256 computed in-circuit):
+circuit/src/main.nr input shape (Phase 1 — SHA-256 off-circuit):
 
-  pubkey_x:               [u8; 32]    public    pubkey.x.hex
-  pubkey_y:               [u8; 32]    public    pubkey.y.hex
-  signature:              [u8; 64]    private   signature.64.hex
-  partial_sha_state:      [u32; 8]    private   partial_sha.state.json
-  signing_input_tail:     [u8; 256]   private   signing_input.tail.padded.bin
-  signing_input_tail_len: u64         private   partial_sha.state.json (tail_len)
-  signing_input_total_len:u64         private   partial_sha.state.json (total_len)
-
-The circuit reconstructs the SHA-256 digest from partial_sha_state + the tail,
-then verifies the P-256 ECDSA signature over that digest.
+  pubkey_x:     [u8; 32]    public    pubkey.x.hex
+  pubkey_y:     [u8; 32]    public    pubkey.y.hex
+  message_hash: [u8; 32]    public    signing_input.hash.hex
+  signature:    [u8; 64]    private   signature.64.hex
 
 To prove:
 
@@ -106,19 +100,19 @@ To prove:
   bun run circuit:execute      # or: cd circuit && nargo execute
   bun run rp:prove             # noir_js witcalc + bb.js prove + verify
 
-Scope boundaries remaining (see plan file for phase roadmap):
+Known gaps (see plan file for roadmap):
+
+  - SHA-256 is computed off-circuit → prover-trust gap on the hash.
+    Closing this requires pulling the signing input into the circuit
+    (partial-SHA or full-SHA) and recomputing the digest there.
 
   - No claim parsing (iss / aud / exp / nonce not checked).
-    Payload values are in out/jws.payload.json for reference.
 
   - No nullifier — proofs are currently replayable.
 
-  - Single hardcoded issuer key (by kid). Production needs a committed
-    JWKS and in-circuit kid selection.
+  - Single hardcoded issuer key (by kid).
 
-  - MockPass keys differ from production Singpass. Swap to production by
-    pointing at https://id.singpass.gov.sg/.well-known/keys and
-    redeploying with the production pubkey.
+  - MockPass keys differ from production Singpass.
 ====================================================================
 `);
 }

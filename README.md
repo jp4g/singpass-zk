@@ -41,25 +41,19 @@ bun run driver:down          # stop MockPass
 | `jws.compact.txt` | Decrypted inner JWS (3-part compact) |
 | `jws.header.json` / `jws.payload.json` | Decoded |
 | `signing_input.bin` | UTF-8 bytes that get SHA-256'd |
-| `signing_input.hash.hex` | 32-byte SHA-256 digest (reference only) |
+| `signing_input.hash.hex` | 32-byte SHA-256 digest (the `message_hash` circuit input) |
 | `signature.{r,s,64}.hex` | r, s, and r‖s in hex |
 | `pubkey.{x,y}.hex` | Issuer JWK x/y as raw 32-byte hex |
 | `issuer_jwk.json` | Full issuer JWK |
-| `partial_sha.state.json` | `{state: [u32×8], cutoff, tail_len, total_len}` |
-| `partial_sha.state.hex` | Partial SHA state, 8 u32s big-endian |
-| `signing_input.tail.bin` | Raw unpadded tail bytes (circuit input after padding) |
-| `signing_input.tail.padded.bin` | Tail zero-padded to 256 bytes |
 | `Prover.toml` | Drop into `circuit/` to prove |
 
 ## Scope (prototype)
 
-What this proves: *the prover possesses a Singpass-signed token over a specific message whose tail they commit to in-circuit*.
+What this proves: *the prover possesses a Singpass-signed token whose SHA-256 digest equals `message_hash`*.
 
-What's done:
-- **SHA-256 is computed inside the circuit** (partial SHA — intermediate state precomputed off-circuit, tail hashed in-circuit). Prover-trust gap on the hash is closed.
-
-What it doesn't (yet) — see `~/.claude/plans/i-m-building-a-prototype-idempotent-charm.md` for the roadmap:
-- No claim parsing (no `iss` / `aud` / `exp` / `nonce` checks in-circuit) — **biggest remaining gap**.
+Known gaps:
+- **SHA-256 is computed off-circuit.** The RP hands the digest in as a public input; a malicious prover could substitute any hash they hold a matching signature for. Closing this requires pulling the signing input into the circuit and recomputing the digest there (partial-SHA or full-SHA — see `feat/partial-sha` for a partial-SHA implementation).
+- No claim parsing (no `iss` / `aud` / `exp` / `nonce` checks in-circuit).
 - No nullifier — proofs replay.
 - Single hardcoded issuer key.
 - Uses MockPass keys, not production Singpass.

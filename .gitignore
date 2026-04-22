@@ -21,3 +21,6 @@ circuit/proofs/
 
 # Driver runtime state
 .mockpass.pid
+
+# RP-generated prover inputs
+circuit/Prover.toml
