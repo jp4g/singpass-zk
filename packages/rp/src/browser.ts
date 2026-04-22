@@ -1,7 +1,11 @@
-export {
-  runOidcFlow,
-  isMockpassReady,
-} from "./flow.ts";
+// Browser-safe subset of the SDK. No imports that touch node:fs / node:crypto
+// transitively; safe to bundle into a Vite app.
+//
+// The full barrel (`./index.ts`) additionally re-exports `runOidcFlow` /
+// `isMockpassReady` from `./flow.ts`, which transitively pulls in
+// `@singpass-zk/driver/src/keys.ts` (uses `node:fs/promises`) and `./jose.ts`
+// (uses `node:crypto`). Those stay server-only.
+
 export {
   SingpassProver,
   buildCircuitInputs,
@@ -15,13 +19,8 @@ export {
   expectedIssAudHash,
   expectedNullifier,
 } from "./hashes.ts";
-export {
-  loadCompiledCircuit,
-  CIRCUIT_JSON_PATH,
-} from "./circuit.ts";
 export type { VerifiedIdToken } from "./jose.ts";
 export {
-  serialize,
   deserialize,
   type VerifiedIdTokenDto,
 } from "./dto.ts";

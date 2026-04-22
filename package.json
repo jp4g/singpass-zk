@@ -10,10 +10,9 @@
     "driver:up": "bun packages/driver/src/index.ts up",
     "driver:down": "bun packages/driver/src/index.ts down",
     "driver:status": "bun packages/driver/src/index.ts status",
-    "rp:flow": "bun packages/rp/src/index.ts",
-    "rp:prove": "bun packages/rp/src/prove.ts",
+    "test": "bun test packages/rp/test",
+    "bench:dev": "cd packages/bench-browser && bun run dev",
     "circuit:compile": "cd circuit && $HOME/.nargo/bin/nargo compile",
-    "circuit:execute": "cd circuit && $HOME/.nargo/bin/nargo execute",
     "mockpass:install": "scripts/apply-patches.sh && cd deps/mockpass && npm install",
     "mockpass:patch": "scripts/apply-patches.sh"
   },

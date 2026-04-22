@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Singpass ZK Browser Bench</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="page-header">
+      <h1>
+        <span class="brand-singpass">Singpass</span>
+        <span class="brand-divider">·</span>
+        <span class="brand-zk">ZK</span>
+        Browser Bench
+      </h1>
+      <p class="subtitle">
+        Live OIDC token from MockPass &rarr; in-browser UltraHonk prove + verify.
+        Powered by
+        <a class="brand-noir" href="https://noir-lang.org" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="brand-noir-mark">
+            <path d="M4 20V4h2.5l11 12V4H20v16h-2.5l-11-12v12H4z" fill="currentColor"/>
+          </svg>
+          Noir
+        </a>.
+      </p>
+    </header>
+
+    <section class="info-row">
+      <section id="token-info" class="token-info">
+        <div class="token-info-title">Loaded ID token</div>
+        <dl id="token-info-list">
+          <dt>status</dt><dd>(loading…)</dd>
+        </dl>
+      </section>
+      <section id="commitments" class="token-info">
+        <div class="token-info-title">Expected commitments (off-circuit oracle)</div>
+        <div id="commitments-list">
+          <div class="verifier-empty">
+            <em>(loading…)</em>
+          </div>
+        </div>
+      </section>
+    </section>
+
+    <section class="input-area">
+      <button id="run" disabled>Prove UltraHonk</button>
+      <div class="bench-instructions">
+        <label>
+          iterations
+          <input id="iters" type="number" value="3" min="1" max="10" />
+        </label>
+        <label>
+          <input id="threads" type="checkbox" checked /> multi-threaded
+        </label>
+      </div>
+    </section>
+
+    <section class="outer">
+      <pre class="inner" id="logs"></pre>
+      <div class="inner" id="verifier">
+        <div class="verifier-empty">
+          <em>Click <strong>Prove UltraHonk</strong> to run the verifier checklist.</em>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

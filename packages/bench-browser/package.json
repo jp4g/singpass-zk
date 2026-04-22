@@ -1,0 +1,22 @@
+{
+  "name": "@singpass-zk/bench-browser",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "postinstall": "scripts/link-circuit.sh"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "4.2.0",
+    "@noir-lang/noir_js": "1.0.0-beta.20",
+    "@singpass-zk/rp": "workspace:*",
+    "@zkpassport/poseidon2": "^0.6.2"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0",
+    "vite-plugin-node-polyfills": "^0.22.0",
+    "rollup-plugin-copy": "^3.5.0"
+  }
+}

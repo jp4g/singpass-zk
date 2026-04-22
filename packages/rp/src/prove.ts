@@ -1,286 +1,153 @@
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
-import { poseidon2Hash } from "@zkpassport/poseidon2";
-import { REPO_ROOT, OUT_DIR } from "@singpass-zk/driver/src/paths.ts";
-import {
-  MAX_SIGNING_INPUT,
-  MAX_ISS_LEN,
-  MAX_AUD_LEN,
-  MAX_NONCE_LEN,
-} from "./dump.ts";
+import type { VerifiedIdToken } from "./jose.ts";
+import { MAX_SIGNING_INPUT } from "./constants.ts";
 
-const CIRCUIT_JSON = resolve(REPO_ROOT, "circuit/target/singpass_zk.json");
-const MAX_SUB_LEN = 64;
-// Matches circuit/src/main.nr: pack_bytes<N> -> [Field; N/31 + 1].
-const SUB_PACKED_FIELDS = Math.floor(MAX_SUB_LEN / 31) + 1;       // 3
-const NONCE_PACKED_FIELDS = Math.floor(MAX_NONCE_LEN / 31) + 1;   // 3
+// Shape of the witness inputs for circuit/src/main.nr.
+export type CircuitInputs = {
+  pubkey_x: number[];
+  pubkey_y: number[];
+  signature: number[];
+  signing_input: number[];
+  signing_input_len: string;
+  header_b64_len: string;
+};
 
-// Pack a byte array into Field-sized little-endian chunks (31 bytes per Field).
-// Mirrors nodash::pack_bytes.
-function packBytes(bytes: Uint8Array, maxLen: number): bigint[] {
-  const fieldCount = Math.floor(maxLen / 31) + 1;
-  const out: bigint[] = new Array(fieldCount).fill(0n);
-  for (let i = 0; i < fieldCount; i++) {
-    let acc = 0n;
-    let mul = 1n;
-    for (let j = 0; j < 31; j++) {
-      const idx = i * 31 + j;
-      const byte = idx < maxLen && idx < bytes.length ? bytes[idx] ?? 0 : 0;
-      acc += BigInt(byte) * mul;
-      mul *= 256n;
-    }
-    out[i] = acc;
+export type PublicOutputs = {
+  keyHash: bigint;
+  issAudHash: bigint;
+  nullifier: bigint;
+  exp: number;
+};
+
+export type ProveResult = {
+  proof: Uint8Array;
+  publicInputs: readonly string[];
+  publicOutputs: PublicOutputs;
+};
+
+const PUBLIC_OUTPUT_COUNT = 4;
+
+// Build circuit witness inputs from a verified ID token.
+export function buildCircuitInputs(v: VerifiedIdToken): CircuitInputs {
+  if (v.signingInput.length >= MAX_SIGNING_INPUT) {
+    throw new Error(
+      `signing_input length ${v.signingInput.length} >= MAX_SIGNING_INPUT ${MAX_SIGNING_INPUT}. ` +
+        `Bump MAX_SIGNING_INPUT in circuit/src/constants.nr and packages/rp/src/constants.ts.`,
+    );
   }
-  return out;
-}
-
-// poseidon2(pack(pubkey_x || pubkey_y)). Mirrors circuit compute_key_hash.
-function expectedKeyHash(x: Uint8Array, y: Uint8Array): bigint {
-  if (x.length !== 32 || y.length !== 32) {
+  if (v.pubX.length !== 32 || v.pubY.length !== 32) {
     throw new Error("pubkey coords must be 32 bytes each");
   }
-  const concat = new Uint8Array(64);
-  concat.set(x, 0);
-  concat.set(y, 32);
-  const packed = packBytes(concat, 64);
-  return poseidon2Hash(packed);
-}
-
-// poseidon2(pack(iss) || iss_len || pack(aud) || aud_len).
-// Mirrors circuit compute_iss_aud_hash.
-function expectedIssAudHash(iss: string, aud: string): bigint {
-  const enc = new TextEncoder();
-  const issBytes = enc.encode(iss);
-  const audBytes = enc.encode(aud);
-  const issZero = new Uint8Array(MAX_ISS_LEN);
-  issZero.set(issBytes, 0);
-  const audZero = new Uint8Array(MAX_AUD_LEN);
-  audZero.set(audBytes, 0);
-  const issPacked = packBytes(issZero, MAX_ISS_LEN);
-  const audPacked = packBytes(audZero, MAX_AUD_LEN);
-  return poseidon2Hash([
-    ...issPacked,
-    BigInt(issBytes.length),
-    ...audPacked,
-    BigInt(audBytes.length),
-  ]);
-}
-
-// poseidon2(sub_packed || sub_len || nonce_packed || nonce_len)
-// Mirrors circuit/src/main.nr:compute_nullifier.
-function expectedNullifier(
-  sub: Uint8Array,
-  subLen: number,
-  nonce: Uint8Array,
-  nonceLen: number,
-): bigint {
-  const subZero = new Uint8Array(MAX_SUB_LEN);
-  subZero.set(sub.subarray(0, subLen), 0);
-  const nonceZero = new Uint8Array(MAX_NONCE_LEN);
-  nonceZero.set(nonce.subarray(0, nonceLen), 0);
-
-  const subPacked = packBytes(subZero, MAX_SUB_LEN);
-  const noncePacked = packBytes(nonceZero, MAX_NONCE_LEN);
-
-  const preimage: bigint[] = [
-    ...subPacked,
-    BigInt(subLen),
-    ...noncePacked,
-    BigInt(nonceLen),
-  ];
-  return poseidon2Hash(preimage);
-}
-
-async function readHex(name: string): Promise<number[]> {
-  const hex = (await readFile(resolve(OUT_DIR, name), "utf8")).trim();
-  if (hex.length % 2 !== 0) {
-    throw new Error(`${name}: odd hex length ${hex.length}`);
-  }
-  const out = new Array<number>(hex.length / 2);
-  for (let i = 0; i < out.length; i++) {
-    out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return out;
-}
-
-async function readBytes(name: string): Promise<Uint8Array> {
-  return new Uint8Array(await readFile(resolve(OUT_DIR, name)));
-}
-
-async function readJson<T>(name: string): Promise<T> {
-  const raw = await readFile(resolve(OUT_DIR, name), "utf8");
-  return JSON.parse(raw) as T;
-}
-
-async function requireCompiledCircuit(): Promise<CompiledCircuit> {
-  if (!existsSync(CIRCUIT_JSON)) {
-    console.error(`No compiled circuit at ${CIRCUIT_JSON}`);
-    console.error(`Run: bun run circuit:execute`);
-    process.exit(1);
-  }
-  const raw = await readFile(CIRCUIT_JSON, "utf8");
-  return JSON.parse(raw) as CompiledCircuit;
-}
-
-function fieldsToBytes(fields: readonly string[]): Uint8Array {
-  const out = new Uint8Array(fields.length);
-  for (let i = 0; i < fields.length; i++) {
-    out[i] = Number(BigInt(fields[i] ?? "0") & 0xffn);
-  }
-  return out;
-}
-
-type PayloadClaims = {
-  iss: string;
-  aud: string;
-  exp: number;
-  nonce: string;
-  sub: string;
-};
-
-type BoundedVecJson = { storage: number[]; len: number };
-
-type SigningInputMeta = {
-  signing_input_len: number;
-  header_b64_len: number;
-  payload_b64_len: number;
-};
-
-async function main() {
-  const circuit = await requireCompiledCircuit();
-
-  const pubkey_x = await readHex("pubkey.x.hex");
-  const pubkey_y = await readHex("pubkey.y.hex");
-  const signature = await readHex("signature.64.hex");
-  const signing_input = await readBytes("signing_input.padded.bin");
-  const meta = await readJson<SigningInputMeta>("signing_input.meta.json");
-  const expected = await readJson<PayloadClaims>("jws.payload.json");
-
-  if (pubkey_x.length !== 32) throw new Error("pubkey_x must be 32 bytes");
-  if (pubkey_y.length !== 32) throw new Error("pubkey_y must be 32 bytes");
-  if (signature.length !== 64) throw new Error("signature must be 64 bytes");
-  if (signing_input.length !== MAX_SIGNING_INPUT) {
-    throw new Error(
-      `signing_input length ${signing_input.length} != ${MAX_SIGNING_INPUT}`,
-    );
+  if (v.signature64.length !== 64) {
+    throw new Error("signature must be 64 bytes");
   }
 
-  const inputs = {
-    pubkey_x,
-    pubkey_y,
-    signature,
-    signing_input: Array.from(signing_input),
-    signing_input_len: meta.signing_input_len.toString(),
-    header_b64_len: meta.header_b64_len.toString(),
+  const padded = new Uint8Array(MAX_SIGNING_INPUT);
+  padded.set(v.signingInput, 0);
+
+  return {
+    pubkey_x: Array.from(v.pubX),
+    pubkey_y: Array.from(v.pubY),
+    signature: Array.from(v.signature64),
+    signing_input: Array.from(padded),
+    signing_input_len: String(v.signingInput.length),
+    header_b64_len: String(v.jws.header.length),
   };
-
-  console.log("1. Witness generation (noir_js)");
-  console.log(
-    `   signing_input_len=${meta.signing_input_len}  header_b64_len=${meta.header_b64_len}`,
-  );
-  const noir = new Noir(circuit);
-  const tWit = performance.now();
-  const { witness } = await noir.execute(inputs);
-  console.log(`   witness solved in ${((performance.now() - tWit) / 1000).toFixed(2)}s`);
-
-  console.log("2. Backend init (UltraHonk)");
-  const api = await Barretenberg.new({ threads: 8 });
-  const backend = new UltraHonkBackend(circuit.bytecode, api);
-
-  console.log("3. generateProof");
-  const tProve = performance.now();
-  const { proof, publicInputs } = await backend.generateProof(witness);
-  console.log(
-    `   proof generated in ${((performance.now() - tProve) / 1000).toFixed(2)}s  ` +
-      `(${proof.length} bytes, ${publicInputs.length} public inputs)`,
-  );
-
-  console.log("4. verifyProof");
-  const tVerify = performance.now();
-  const ok = await backend.verifyProof({ proof, publicInputs });
-  console.log(
-    `   verification ${ok ? "OK" : "FAILED"} in ${(
-      (performance.now() - tVerify) /
-      1000
-    ).toFixed(2)}s`,
-  );
-
-  console.log("5. Check key_hash + iss_aud_hash + nullifier + exp match expected");
-  checkOutputs(
-    publicInputs,
-    expected,
-    Uint8Array.from(pubkey_x),
-    Uint8Array.from(pubkey_y),
-  );
-
-  await api.destroy();
-  process.exit(ok ? 0 : 1);
 }
 
-// Public inputs = Claims return only (no public prover-side inputs beyond
-// the pubkey, which is private):
-//   key_hash      : Field   - 1
-//   iss_aud_hash  : Field   - 1
-//   nullifier     : Field   - 1
-//   exp           : u64     - 1
-// Total: 4.
-function checkOutputs(
+export function parsePublicOutputs(
   publicInputs: readonly string[],
-  expected: PayloadClaims,
-  pubkeyX: Uint8Array,
-  pubkeyY: Uint8Array,
-): void {
-  const EXPECTED_COUNT = 4;
-  if (publicInputs.length !== EXPECTED_COUNT) {
+): PublicOutputs {
+  if (publicInputs.length !== PUBLIC_OUTPUT_COUNT) {
     throw new Error(
-      `public input count ${publicInputs.length} != expected ${EXPECTED_COUNT}`,
+      `expected ${PUBLIC_OUTPUT_COUNT} public outputs, got ${publicInputs.length}`,
     );
   }
-
-  const keyHash = BigInt(publicInputs[0] ?? "0");
-  const issAudHash = BigInt(publicInputs[1] ?? "0");
-  const nullifier = BigInt(publicInputs[2] ?? "0");
-  const exp = Number(BigInt(publicInputs[3] ?? "0"));
-
-  const expectedK = expectedKeyHash(pubkeyX, pubkeyY);
-  if (keyHash !== expectedK) {
-    throw new Error(
-      `key_hash mismatch:\n  circuit:  0x${keyHash.toString(16)}\n  expected: 0x${expectedK.toString(16)}`,
-    );
-  }
-
-  const expectedIA = expectedIssAudHash(expected.iss, expected.aud);
-  if (issAudHash !== expectedIA) {
-    throw new Error(
-      `iss_aud_hash mismatch:\n  circuit:  0x${issAudHash.toString(16)}\n  expected: 0x${expectedIA.toString(16)}`,
-    );
-  }
-
-  const nonceBytes = new TextEncoder().encode(expected.nonce);
-  const subBytes = new TextEncoder().encode(expected.sub);
-  const expectedN = expectedNullifier(subBytes, subBytes.length, nonceBytes, nonceBytes.length);
-  if (nullifier !== expectedN) {
-    throw new Error(
-      `nullifier mismatch:\n  circuit:  0x${nullifier.toString(16)}\n  expected: 0x${expectedN.toString(16)}`,
-    );
-  }
-
-  if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
-  const now = Math.floor(Date.now() / 1000);
-  if (exp <= now)
-    throw new Error(`exp ${exp} <= now ${now} - token expired (verifier-side check)`);
-
-  console.log(`   key_hash     = 0x${keyHash.toString(16)}`);
-  console.log(`   iss_aud_hash = 0x${issAudHash.toString(16)}`);
-  console.log(`   nullifier    = 0x${nullifier.toString(16)}`);
-  console.log(`   exp          = ${expected.exp} (verifier's now=${now}, diff=${expected.exp - now}s)`);
-  console.log(`   (all 3 hashes recomputed off-circuit; exp checked off-circuit; match)`);
+  return {
+    keyHash: BigInt(publicInputs[0] ?? "0"),
+    issAudHash: BigInt(publicInputs[1] ?? "0"),
+    nullifier: BigInt(publicInputs[2] ?? "0"),
+    exp: Number(BigInt(publicInputs[3] ?? "0")),
+  };
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+// Holds a long-lived Noir runtime + Barretenberg backend so callers can run
+// many prove / verify operations without paying the bb.js startup cost each
+// time. Also sidesteps a socket race where spinning up a fresh Barretenberg
+// immediately after `destroy()` can time out waiting for the new socket.
+export class SingpassProver {
+  private readonly noir: Noir;
+  private readonly api: Barretenberg;
+  private readonly backend: UltraHonkBackend;
+  private closed = false;
+
+  private constructor(
+    noir: Noir,
+    api: Barretenberg,
+    backend: UltraHonkBackend,
+  ) {
+    this.noir = noir;
+    this.api = api;
+    this.backend = backend;
+  }
+
+  static async create(
+    circuit: CompiledCircuit,
+    opts: { threads?: number } = {},
+  ): Promise<SingpassProver> {
+    const noir = new Noir(circuit);
+    const api = await Barretenberg.new({ threads: opts.threads ?? 8 });
+    const backend = new UltraHonkBackend(circuit.bytecode, api);
+    return new SingpassProver(noir, api, backend);
+  }
+
+  // Convenience: full prove path. Use the split methods below if you want
+  // to time witness gen separately from proof gen (e.g. in benchmarks).
+  async prove(verified: VerifiedIdToken): Promise<ProveResult> {
+    this.assertOpen();
+    const { witness } = await this.executeWitness(verified);
+    const { proof, publicInputs } = await this.generateProofFromWitness(witness);
+    return {
+      proof,
+      publicInputs,
+      publicOutputs: parsePublicOutputs(publicInputs),
+    };
+  }
+
+  async executeWitness(
+    verified: VerifiedIdToken,
+  ): Promise<{ witness: Uint8Array; inputs: CircuitInputs }> {
+    this.assertOpen();
+    const inputs = buildCircuitInputs(verified);
+    const { witness } = await this.noir.execute(inputs);
+    return { witness, inputs };
+  }
+
+  async generateProofFromWitness(
+    witness: Uint8Array,
+  ): Promise<{ proof: Uint8Array; publicInputs: readonly string[] }> {
+    this.assertOpen();
+    return this.backend.generateProof(witness);
+  }
+
+  async verifyProof(
+    proof: Uint8Array,
+    publicInputs: readonly string[],
+  ): Promise<boolean> {
+    this.assertOpen();
+    return this.backend.verifyProof({ proof, publicInputs });
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    await this.api.destroy();
+  }
+
+  private assertOpen(): void {
+    if (this.closed) {
+      throw new Error("SingpassProver: already closed");
+    }
+  }
+}

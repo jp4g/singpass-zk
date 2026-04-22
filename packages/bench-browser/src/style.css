@@ -1,0 +1,285 @@
+:root {
+  --singpass-red: #e2231a;
+  --noir-black: #111;
+  --ok-green: #16a34a;
+  --warn-amber: #d97706;
+  --fail-red: #dc2626;
+  --muted: #555;
+  --rule: #ddd;
+  --bg: #fafafa;
+  --panel-bg: #fff;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  margin: 0;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--noir-black);
+  max-width: 1200px;
+  margin-inline: auto;
+}
+
+.page-header {
+  margin-bottom: 16px;
+}
+
+h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.brand-singpass {
+  color: var(--singpass-red);
+  font-weight: 800;
+}
+
+.brand-zk {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brand-divider {
+  color: var(--muted);
+  margin: 0 4px;
+  font-weight: 300;
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.brand-noir {
+  color: var(--noir-black);
+  text-decoration: none;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.brand-noir:hover { text-decoration: underline; }
+
+.brand-noir-mark {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+}
+
+/* Loaded token + commitments row */
+.info-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 16px 0;
+}
+
+.token-info {
+  border: 1px solid var(--noir-black);
+  background: var(--panel-bg);
+  padding: 12px 14px;
+}
+
+.token-info-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+#token-info-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+#token-info-list dt {
+  color: var(--muted);
+  text-align: right;
+  font-weight: 500;
+}
+
+#token-info-list dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+/* Commitment blocks */
+.commitment {
+  margin-bottom: 12px;
+}
+
+.commitment:last-child {
+  margin-bottom: 0;
+}
+
+.commitment-name {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.commitment-form {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.commitment-inputs {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  margin: 2px 0 2px 12px;
+  color: var(--muted);
+}
+
+.commitment-inputs > div {
+  word-break: break-all;
+}
+
+.commitment-inputs .v {
+  color: var(--noir-black);
+}
+
+.commitment-hash {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.commitment-hash::before {
+  content: "→ ";
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Controls */
+.input-area {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.bench-instructions {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.bench-instructions label {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.bench-instructions input[type="number"] {
+  width: 56px;
+  padding: 4px;
+  font: inherit;
+}
+
+button {
+  padding: 8px 16px;
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--noir-black);
+  background: var(--panel-bg);
+  font-weight: 600;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Output panes */
+.outer {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.inner {
+  flex: 1;
+  width: 50%;
+  border: 1px solid var(--noir-black);
+  padding: 12px 14px;
+  margin-top: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  min-height: 240px;
+  background: var(--panel-bg);
+}
+
+.verifier-empty {
+  color: var(--muted);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* Verifier checklist */
+.verifier-run {
+  border-top: 1px dashed var(--rule);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.verifier-run:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.verifier-stamp {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 4px 0;
+}
+
+.check-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.check-icon.ok { color: var(--ok-green); }
+.check-icon.warn { color: var(--warn-amber); }
+.check-icon.fail { color: var(--fail-red); }
+
+.check-body { flex: 1 1 auto; }
+
+.check-label { font-weight: 600; }
+
+.check-detail {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+  word-break: break-all;
+}

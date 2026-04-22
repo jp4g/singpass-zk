@@ -59,17 +59,24 @@ fn main(
     ));
 
     // 4. Slice the base64url-encoded payload out of signing_input
-    //    (everything after the `.`) into a BoundedVec. Bytes beyond the
-    //    real payload length stay zero and are ignored by the decoder.
+    //    (everything after the `.`) into a BoundedVec. Conditional *writes*
+    //    into large arrays are expensive, so we do an unconditional write
+    //    with the *source* index clamped to MAX_SIGNING_INPUT - 1 when out
+    //    of range. The dumper zero-pads signing_input past signing_input_len,
+    //    so the clamped slot is guaranteed 0; tail slots of payload_b64
+    //    storage stay 0, which is what decode_var requires past `len`.
+    assert(signing_input_len < MAX_SIGNING_INPUT);
     let payload_b64_len = signing_input_len - header_b64_len - 1;
     let mut payload_b64_storage: [u8; MAX_PAYLOAD_B64] = [0; MAX_PAYLOAD_B64];
     let payload_b64_start = header_b64_len + 1;
     for i in 0..MAX_PAYLOAD_B64 {
-        let src_idx = payload_b64_start + i as u32;
-        if src_idx < signing_input_len {
-            payload_b64_storage[i] = signing_input[src_idx];
+        let mut src_idx = payload_b64_start + i as u32;
+        if src_idx >= signing_input_len {
+            src_idx = MAX_SIGNING_INPUT - 1;
         }
+        payload_b64_storage[i] = signing_input[src_idx];
     }
+    
     let payload_b64: BoundedVec<u8, MAX_PAYLOAD_B64> =
         BoundedVec::from_parts_unchecked(payload_b64_storage, payload_b64_len);
 
@@ -80,13 +87,22 @@ fn main(
     // 6. Promote the BoundedVec into a fixed-size byte array for the JSON
     //    parser, filling the tail with 0x20 (space) rather than zeros so
     //    the JSON scanner sees trailing whitespace instead of invalid
-    //    tokens.
+    //    tokens. Unconditional write with openbanking-style clamped index:
+    //    in-range iterations go to `i`, out-of-range iterations pile onto
+    //    `safe_idx`, then we unconditionally restore `safe_idx` to 0x20.
+    //    The assert pins one slot of headroom so `safe_idx` never aliases
+    //    a real payload byte.
+    assert(payload_bv.len() < MAX_PAYLOAD_BYTES);
     let mut payload: [u8; MAX_PAYLOAD_BYTES] = [0x20; MAX_PAYLOAD_BYTES];
+    let safe_idx = MAX_PAYLOAD_BYTES - 1;
     for i in 0..MAX_PAYLOAD_BYTES {
-        if (i as u32) < payload_bv.len() {
-            payload[i] = payload_bv.get_unchecked(i);
+        let mut dst = i;
+        if (i as u32) >= payload_bv.len() {
+            dst = safe_idx;
         }
+        payload[dst] = payload_bv.get_unchecked(i);
     }
+    payload[safe_idx] = 0x20;
 
     // 7. Parse the JSON payload.
     let json: JSON1kb = JSON1kb::parse_json(payload);

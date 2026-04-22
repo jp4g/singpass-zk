@@ -11,7 +11,6 @@ export const RP_PRIVATE_JWKS = resolve(CERTS_DIR, "fapi-rp-private.json");
 export const RP_PUBLIC_JWKS = resolve(CERTS_DIR, "fapi-rp-public.json");
 export const ASP_PUBLIC_JWKS = resolve(CERTS_DIR, "fapi-asp-public.json");
 
-export const OUT_DIR = resolve(REPO_ROOT, "out");
 export const PID_FILE = resolve(REPO_ROOT, ".mockpass.pid");
 export const LOG_FILE = resolve(REPO_ROOT, ".mockpass.log");
 

@@ -4,8 +4,12 @@
   "version": "0.0.1",
   "type": "module",
   "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts"
+  },
   "scripts": {
-    "start": "bun run src/index.ts"
+    "test": "bun test test"
   },
   "dependencies": {
     "@aztec/bb.js": "4.2.0",

@@ -1,7 +1,6 @@
 import {
   FAPI_BASE,
   DISCOVERY_URL,
-  OUT_DIR,
 } from "@singpass-zk/driver/src/paths.ts";
 
 export const CLIENT_ID = process.env.CLIENT_ID ?? "mock-fapi-client-id";
@@ -22,5 +21,3 @@ export const Endpoints = {
   token: `${FAPI_BASE}/token`,
   jwks: `${FAPI_BASE}/.well-known/keys`,
 };
-
-export const OUT = OUT_DIR;
