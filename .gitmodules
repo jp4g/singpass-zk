@@ -1,0 +1,3 @@
+[submodule "deps/mockpass"]
+	path = deps/mockpass
+	url = https://github.com/opengovsg/mockpass

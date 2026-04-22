@@ -1,0 +1,23 @@
+node_modules/
+dist/
+out/
+*.log
+.DS_Store
+.env
+.env.local
+
+# Bun / pnpm artifacts
+.pnpm-store/
+bun.lockb
+
+# Editor
+.idea/
+.vscode/
+.claude/
+
+# Noir build output
+circuit/target/
+circuit/proofs/
+
+# Driver runtime state
+.mockpass.pid

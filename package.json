@@ -1,0 +1,22 @@
+{
+  "name": "singpass-zk",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Singpass FAPI ID token verification inside a Noir circuit (prototype)",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "driver:up": "bun packages/driver/src/index.ts up",
+    "driver:down": "bun packages/driver/src/index.ts down",
+    "driver:status": "bun packages/driver/src/index.ts status",
+    "rp:flow": "bun packages/rp/src/index.ts",
+    "rp:prove": "bun packages/rp/src/prove.ts",
+    "circuit:compile": "cd circuit && $HOME/.nargo/bin/nargo compile",
+    "circuit:execute": "cd circuit && $HOME/.nargo/bin/nargo execute",
+    "mockpass:install": "cd deps/mockpass && npm install"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
