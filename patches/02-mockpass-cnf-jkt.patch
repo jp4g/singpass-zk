@@ -1,0 +1,11 @@
+diff --git a/lib/express/fapi/fapi.service.js b/lib/express/fapi/fapi.service.js
+--- a/lib/express/fapi/fapi.service.js
++++ b/lib/express/fapi/fapi.service.js
+@@ -142,6 +142,7 @@
+       exp: Math.floor(Date.now() / 1000) + expires_in,
+       iat: Math.floor(Date.now() / 1000),
+       nonce: authRequest.nonce,
++      cnf: { jkt: authRequest.dpopJkt },
+     }
+
+     //Sign Id Token

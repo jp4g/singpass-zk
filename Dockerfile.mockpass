@@ -9,16 +9,22 @@ WORKDIR /app
 COPY deps/mockpass /app/deps/mockpass
 COPY patches /app/patches
 
-# Apply the iat-floor patch directly. We can't use scripts/apply-patches.sh
-# inside Docker because it relies on `git apply` with the submodule's .git
-# gitfile, which points outside the build context. The host's submodule may
-# already be patched (tests / local dev), so check first.
+# Apply each patch in patches/. We can't use scripts/apply-patches.sh inside
+# Docker because it relies on `git apply` with the submodule's .git gitfile,
+# which points outside the build context. The host's submodule may already
+# be patched (local dev), so check before each apply. Patches are applied in
+# alphabetical order — name them with a leading `NN-` to control sequencing
+# when one depends on another.
 RUN cd /app/deps/mockpass \
-    && if patch -p1 --dry-run -R < /app/patches/mockpass-iat-floor.patch >/dev/null 2>&1; then \
-         echo "iat-floor patch already applied (from host submodule)"; \
-       else \
-         patch -p1 < /app/patches/mockpass-iat-floor.patch; \
-       fi
+    && for p in /app/patches/*.patch; do \
+         name=$(basename "$p"); \
+         if patch -p1 --dry-run -R < "$p" >/dev/null 2>&1; then \
+           echo "$name: already applied"; \
+         else \
+           echo "$name: applying"; \
+           patch -p1 < "$p"; \
+         fi; \
+       done
 
 WORKDIR /app/deps/mockpass
 RUN npm install --omit=dev
