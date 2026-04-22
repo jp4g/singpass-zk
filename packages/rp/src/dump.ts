@@ -47,8 +47,6 @@ export async function dumpAll(v: VerifiedIdToken): Promise<string[]> {
   const signingInputLen = v.signingInput.length;
   const payloadB64Len = signingInputLen - headerB64Len - 1;
 
-  const expectedIss = stringToBoundedVec(String(v.payload["iss"] ?? ""), MAX_ISS_LEN);
-  const expectedAud = stringToBoundedVec(String(v.payload["aud"] ?? ""), MAX_AUD_LEN);
   const expectedNonce = stringToBoundedVec(
     String(v.payload["nonce"] ?? ""),
     MAX_NONCE_LEN,
@@ -62,8 +60,6 @@ export async function dumpAll(v: VerifiedIdToken): Promise<string[]> {
         signing_input_len: signingInputLen,
         header_b64_len: headerB64Len,
         payload_b64_len: payloadB64Len,
-        expected_iss: boundedVecToJson(expectedIss),
-        expected_aud: boundedVecToJson(expectedAud),
         expected_nonce: boundedVecToJson(expectedNonce),
         now,
       },
@@ -75,8 +71,6 @@ export async function dumpAll(v: VerifiedIdToken): Promise<string[]> {
   await w(
     "Prover.toml",
     makeProverToml(v, paddedSigningInput, headerB64Len, {
-      expected_iss: expectedIss,
-      expected_aud: expectedAud,
       expected_nonce: expectedNonce,
       now,
     }),
@@ -113,8 +107,6 @@ function padBytes(bytes: Uint8Array, maxLen: number): Uint8Array {
 }
 
 type ProverExpected = {
-  expected_iss: BoundedVec;
-  expected_aud: BoundedVec;
   expected_nonce: BoundedVec;
   now: number;
 };
@@ -136,10 +128,6 @@ function makeProverToml(
     `signing_input_len = "${v.signingInput.length}"`,
     `header_b64_len = "${headerB64Len}"`,
     `now = "${exp.now}"`,
-    "",
-    boundedVecToToml("expected_iss", exp.expected_iss),
-    "",
-    boundedVecToToml("expected_aud", exp.expected_aud),
     "",
     boundedVecToToml("expected_nonce", exp.expected_nonce),
     "",

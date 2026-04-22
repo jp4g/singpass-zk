@@ -15,26 +15,28 @@ global MAX_AUD_LEN: u32 = 64;
 global MAX_NONCE_LEN: u32 = 64;
 global MAX_SUB_LEN: u32 = 64;
 
-// Packed field counts for the nullifier preimage.
 // pack_bytes<N> returns [Field; N/31 + 1].
 global SUB_PACKED_FIELDS: u32 = MAX_SUB_LEN / 31 + 1;       // 3
 global NONCE_PACKED_FIELDS: u32 = MAX_NONCE_LEN / 31 + 1;   // 3
-// Preimage layout: sub_packed || sub_len || nonce_packed || nonce_len
-global NULLIFIER_PREIMAGE_LEN: u32 = SUB_PACKED_FIELDS + 1 + NONCE_PACKED_FIELDS + 1;
+global ISS_PACKED_FIELDS: u32 = MAX_ISS_LEN / 31 + 1;       // 3
+global AUD_PACKED_FIELDS: u32 = MAX_AUD_LEN / 31 + 1;       // 3
+global PUBKEY_PACKED_FIELDS: u32 = 64 / 31 + 1;             // 3
 
-// key_hash preimage: pack(pubkey_x || pubkey_y) = 64 bytes -> 3 Fields.
-global PUBKEY_PACKED_FIELDS: u32 = 64 / 31 + 1;
+// Preimage layouts.
+global NULLIFIER_PREIMAGE_LEN: u32 = SUB_PACKED_FIELDS + 1 + NONCE_PACKED_FIELDS + 1;   // 8
+global ISS_AUD_PREIMAGE_LEN: u32 = ISS_PACKED_FIELDS + 1 + AUD_PACKED_FIELDS + 1;       // 8
 
 // Public outputs:
-//   key_hash  - poseidon2(pack(pubkey_x || pubkey_y)). Verifier checks this
-//               against the known Singpass pubkey hash (or set of hashes
-//               across rotations). pubkey_x/y themselves are private inputs.
-//   nullifier - poseidon2 over sub + nonce, a per-session identity handle.
-//   exp       - token expiry.
-// iss / aud / nonce are pinned in-circuit by equality against the expected
-// public inputs; no need to expose them in the output.
+//   key_hash      - poseidon2 over packed pubkey bytes. Verifier matches against
+//                   known Singpass pubkey hash(es) to reject unrelated signers.
+//   iss_aud_hash  - poseidon2 over (iss, aud) so the verifier can pin to a
+//                   specific issuer + client_id pair without spending 130
+//                   public inputs per proof.
+//   nullifier     - poseidon2 over (sub, nonce); session-scoped identity handle.
+//   exp           - token expiry.
 pub struct Claims {
     key_hash: Field,
+    iss_aud_hash: Field,
     nullifier: Field,
     exp: u64,
 }
@@ -42,8 +44,6 @@ pub struct Claims {
 fn main(
     pubkey_x: [u8; 32],
     pubkey_y: [u8; 32],
-    expected_iss: pub BoundedVec<u8, MAX_ISS_LEN>,
-    expected_aud: pub BoundedVec<u8, MAX_AUD_LEN>,
     expected_nonce: pub BoundedVec<u8, MAX_NONCE_LEN>,
     now: pub u64,
     signature: [u8; 64],
@@ -96,15 +96,14 @@ fn main(
     let sub: BoundedVec<u8, MAX_SUB_LEN> =
         json.get_string_from_path([key_vec("sub")]).unwrap();
 
-    assert(bv_eq(iss, expected_iss), "iss mismatch");
-    assert(bv_eq(aud, expected_aud), "aud mismatch");
     assert(bv_eq(nonce, expected_nonce), "nonce mismatch");
     assert(exp > now, "token expired");
 
-    let nullifier = compute_nullifier(sub, expected_nonce);
     let key_hash = compute_key_hash(pubkey_x, pubkey_y);
+    let iss_aud_hash = compute_iss_aud_hash(iss, aud);
+    let nullifier = compute_nullifier(sub, expected_nonce);
 
-    Claims { key_hash, nullifier, exp }
+    Claims { key_hash, iss_aud_hash, nullifier, exp }
 }
 
 fn compute_key_hash(x: [u8; 32], y: [u8; 32]) -> Field {
@@ -117,10 +116,29 @@ fn compute_key_hash(x: [u8; 32], y: [u8; 32]) -> Field {
     Poseidon2::hash(packed, PUBKEY_PACKED_FIELDS)
 }
 
-// Poseidon2 commitment over (sub_bytes, sub_len, nonce_bytes, nonce_len).
-// Using expected_nonce (== extracted nonce by the assert above) since it's
-// already zero-tail-padded by the caller and avoids re-materializing the
-// extracted BoundedVec's tail.
+fn compute_iss_aud_hash(
+    iss: BoundedVec<u8, MAX_ISS_LEN>,
+    aud: BoundedVec<u8, MAX_AUD_LEN>,
+) -> Field {
+    let iss_bytes: [u8; MAX_ISS_LEN] = bv_to_storage(iss);
+    let aud_bytes: [u8; MAX_AUD_LEN] = bv_to_storage(aud);
+
+    let iss_packed: [Field; ISS_PACKED_FIELDS] = pack_bytes(iss_bytes);
+    let aud_packed: [Field; AUD_PACKED_FIELDS] = pack_bytes(aud_bytes);
+
+    let mut preimage: [Field; ISS_AUD_PREIMAGE_LEN] = [0; ISS_AUD_PREIMAGE_LEN];
+    for i in 0..ISS_PACKED_FIELDS {
+        preimage[i] = iss_packed[i];
+    }
+    preimage[ISS_PACKED_FIELDS] = iss.len() as Field;
+    for i in 0..AUD_PACKED_FIELDS {
+        preimage[ISS_PACKED_FIELDS + 1 + i] = aud_packed[i];
+    }
+    preimage[ISS_PACKED_FIELDS + 1 + AUD_PACKED_FIELDS] = aud.len() as Field;
+
+    Poseidon2::hash(preimage, ISS_AUD_PREIMAGE_LEN)
+}
+
 fn compute_nullifier(
     sub: BoundedVec<u8, MAX_SUB_LEN>,
     nonce: BoundedVec<u8, MAX_NONCE_LEN>,
@@ -153,8 +171,6 @@ fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
     BoundedVec::from_parts_unchecked(storage, N)
 }
 
-// Zero-pad tail beyond `len` so pack_bytes sees deterministic bytes for
-// values that don't fill their full capacity.
 fn bv_to_storage<let N: u32>(bv: BoundedVec<u8, N>) -> [u8; N] {
     let mut out: [u8; N] = [0; N];
     for i in 0..N {

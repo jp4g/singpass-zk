@@ -49,6 +49,26 @@ function expectedKeyHash(x: Uint8Array, y: Uint8Array): bigint {
   return poseidon2Hash(packed);
 }
 
+// poseidon2(pack(iss) || iss_len || pack(aud) || aud_len).
+// Mirrors circuit compute_iss_aud_hash.
+function expectedIssAudHash(iss: string, aud: string): bigint {
+  const enc = new TextEncoder();
+  const issBytes = enc.encode(iss);
+  const audBytes = enc.encode(aud);
+  const issZero = new Uint8Array(MAX_ISS_LEN);
+  issZero.set(issBytes, 0);
+  const audZero = new Uint8Array(MAX_AUD_LEN);
+  audZero.set(audBytes, 0);
+  const issPacked = packBytes(issZero, MAX_ISS_LEN);
+  const audPacked = packBytes(audZero, MAX_AUD_LEN);
+  return poseidon2Hash([
+    ...issPacked,
+    BigInt(issBytes.length),
+    ...audPacked,
+    BigInt(audBytes.length),
+  ]);
+}
+
 // poseidon2(sub_packed || sub_len || nonce_packed || nonce_len)
 // Mirrors circuit/src/main.nr:compute_nullifier.
 function expectedNullifier(
@@ -127,8 +147,6 @@ type SigningInputMeta = {
   signing_input_len: number;
   header_b64_len: number;
   payload_b64_len: number;
-  expected_iss: BoundedVecJson;
-  expected_aud: BoundedVecJson;
   expected_nonce: BoundedVecJson;
   now: number;
 };
@@ -155,14 +173,6 @@ async function main() {
   const inputs = {
     pubkey_x,
     pubkey_y,
-    expected_iss: {
-      storage: meta.expected_iss.storage,
-      len: meta.expected_iss.len.toString(),
-    },
-    expected_aud: {
-      storage: meta.expected_aud.storage,
-      len: meta.expected_aud.len.toString(),
-    },
     expected_nonce: {
       storage: meta.expected_nonce.storage,
       len: meta.expected_nonce.len.toString(),
@@ -205,7 +215,7 @@ async function main() {
     ).toFixed(2)}s`,
   );
 
-  console.log("5. Check key_hash + nullifier + exp outputs match expected");
+  console.log("5. Check key_hash + iss_aud_hash + nullifier + exp match expected");
   checkOutputs(
     publicInputs,
     expected,
@@ -219,15 +229,14 @@ async function main() {
 }
 
 // Public inputs (in declaration order):
-//   expected_iss    : BoundedVec<u8, 64>      — 65
-//   expected_aud    : BoundedVec<u8, 64>      — 65
-//   expected_nonce  : BoundedVec<u8, 64>      — 65
-//   now             : u64                     — 1
+//   expected_nonce : BoundedVec<u8, 64>     — 65
+//   now            : u64                    — 1
 //   Claims return:
-//     key_hash  : Field                       — 1
-//     nullifier : Field                       — 1
-//     exp       : u64                         — 1
-// Total: 65*3 + 1 + 1 + 1 + 1 = 199.
+//     key_hash     : Field                  — 1
+//     iss_aud_hash : Field                  — 1
+//     nullifier    : Field                  — 1
+//     exp          : u64                    — 1
+// Total: 65 + 1 + 4 = 70.
 function checkOutputs(
   publicInputs: readonly string[],
   expected: PayloadClaims,
@@ -235,8 +244,7 @@ function checkOutputs(
   pubkeyX: Uint8Array,
   pubkeyY: Uint8Array,
 ): void {
-  const EXPECTED_COUNT =
-    (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + (MAX_NONCE_LEN + 1) + 1 + 1 + 1 + 1;
+  const EXPECTED_COUNT = (MAX_NONCE_LEN + 1) + 1 + 1 + 1 + 1 + 1;
   if (publicInputs.length !== EXPECTED_COUNT) {
     throw new Error(
       `public input count ${publicInputs.length} != expected ${EXPECTED_COUNT}`,
@@ -244,12 +252,12 @@ function checkOutputs(
   }
 
   let off = 0;
-  off += MAX_ISS_LEN + 1;
-  off += MAX_AUD_LEN + 1;
   off += MAX_NONCE_LEN + 1;
   off += 1; // now
 
   const keyHash = BigInt(publicInputs[off] ?? "0");
+  off += 1;
+  const issAudHash = BigInt(publicInputs[off] ?? "0");
   off += 1;
   const nullifier = BigInt(publicInputs[off] ?? "0");
   off += 1;
@@ -259,6 +267,13 @@ function checkOutputs(
   if (keyHash !== expectedK) {
     throw new Error(
       `key_hash mismatch:\n  circuit:  0x${keyHash.toString(16)}\n  expected: 0x${expectedK.toString(16)}`,
+    );
+  }
+
+  const expectedIA = expectedIssAudHash(expected.iss, expected.aud);
+  if (issAudHash !== expectedIA) {
+    throw new Error(
+      `iss_aud_hash mismatch:\n  circuit:  0x${issAudHash.toString(16)}\n  expected: 0x${expectedIA.toString(16)}`,
     );
   }
 
@@ -274,10 +289,11 @@ function checkOutputs(
   if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
   if (exp <= meta.now) throw new Error(`exp <= now - shouldn't have verified`);
 
-  console.log(`   key_hash  = 0x${keyHash.toString(16)}`);
-  console.log(`   nullifier = 0x${nullifier.toString(16)}`);
-  console.log(`   exp       = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
-  console.log(`   (both hashes recomputed off-circuit; match)`);
+  console.log(`   key_hash     = 0x${keyHash.toString(16)}`);
+  console.log(`   iss_aud_hash = 0x${issAudHash.toString(16)}`);
+  console.log(`   nullifier    = 0x${nullifier.toString(16)}`);
+  console.log(`   exp          = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
+  console.log(`   (all 3 hashes recomputed off-circuit; match)`);
 }
 
 main().catch((e) => {
