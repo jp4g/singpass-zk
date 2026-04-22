@@ -1,0 +1,31 @@
+services:
+  mockpass:
+    build:
+      context: .
+      dockerfile: Dockerfile.mockpass
+    ports:
+      - "5156:5156"
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://localhost:5156/singpass/v3/fapi/.well-known/openid-configuration
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  bench:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench
+    ports:
+      - "5173:5173"
+    environment:
+      MOCKPASS_HOST: mockpass
+      MOCKPASS_PORT: "5156"
+    depends_on:
+      mockpass:
+        condition: service_healthy

@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-alpine AS mockpass
+
+RUN apk add --no-cache patch
+
+WORKDIR /app
+
+COPY deps/mockpass /app/deps/mockpass
+COPY patches /app/patches
+
+# Apply the iat-floor patch directly. We can't use scripts/apply-patches.sh
+# inside Docker because it relies on `git apply` with the submodule's .git
+# gitfile, which points outside the build context. The host's submodule may
+# already be patched (tests / local dev), so check first.
+RUN cd /app/deps/mockpass \
+    && if patch -p1 --dry-run -R < /app/patches/mockpass-iat-floor.patch >/dev/null 2>&1; then \
+         echo "iat-floor patch already applied (from host submodule)"; \
+       else \
+         patch -p1 < /app/patches/mockpass-iat-floor.patch; \
+       fi
+
+WORKDIR /app/deps/mockpass
+RUN npm install --omit=dev
+
+EXPOSE 5156
+
+CMD ["node", "index.js"]

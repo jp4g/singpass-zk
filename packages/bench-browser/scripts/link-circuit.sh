@@ -1,9 +1,11 @@
 #!/usr/bin/env sh
-# Symlink the compiled circuit into public/ so Vite can serve it as a static
-# asset. Run as `postinstall`. The target may not exist yet on a fresh clone:
-# in that case print a hint and skip linking; running `bun run circuit:compile`
-# at the repo root will produce the artifact, then `bun install` again or
-# manually re-run this script will create the link.
+# Copy the compiled circuit into public/ so Vite can serve it as a static
+# asset. Run as `postinstall`. We copy (not symlink) so the artifact survives
+# Docker `COPY` semantics where a relative symlink would dangle.
+#
+# The target may not exist yet on a fresh clone: in that case print a hint
+# and skip; running `bun run circuit:compile` then re-running `bun install`
+# (or this script directly) will populate it.
 
 set -e
 cd "$(dirname "$0")/.."
@@ -19,5 +21,8 @@ if [ ! -f "$target" ]; then
   exit 0
 fi
 
-ln -sf "../$target" "$link"
-echo "link-circuit: $link -> $target"
+# Remove stale symlink (from previous installs that used `ln -sf`) so we
+# don't accidentally cp into the symlink target.
+rm -f "$link"
+cp -f "$target" "$link"
+echo "link-circuit: copied $target -> $link"

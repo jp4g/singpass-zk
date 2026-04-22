@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+
+# ----- Stage 1: nargo + compile circuit -----
+FROM ubuntu:22.04 AS circuit-builder
+
+ARG NARGO_VERSION=1.0.0-beta.20
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+
+# noirup install (multi-arch; auto-detects amd64/arm64)
+RUN curl -fsSL https://raw.githubusercontent.com/noir-lang/noirup/main/install | bash
+ENV PATH="/root/.nargo/bin:${PATH}"
+RUN noirup -v ${NARGO_VERSION}
+
+WORKDIR /build
+COPY circuit ./circuit
+RUN cd circuit && nargo compile
+
+# ----- Stage 2: bun workspace install + bench runtime -----
+FROM oven/bun:1.3 AS bench
+
+WORKDIR /app
+
+# Workspace metadata first so bun install layer caches cleanly.
+COPY package.json bun.lock tsconfig.base.json ./
+COPY packages/driver/package.json        ./packages/driver/package.json
+COPY packages/rp/package.json            ./packages/rp/package.json
+COPY packages/bench-browser/package.json ./packages/bench-browser/package.json
+
+# Source. The bench-browser postinstall (link-circuit.sh) copies
+# circuit/target/singpass_zk.json into public/, so it must exist BEFORE
+# `bun install` runs.
+COPY packages    ./packages
+COPY scripts     ./scripts
+COPY patches     ./patches
+COPY deps/mockpass ./deps/mockpass
+
+COPY --from=circuit-builder /build/circuit/target/singpass_zk.json \
+     ./circuit/target/singpass_zk.json
+
+RUN bun install --frozen-lockfile
+
+ENV MOCKPASS_HOST=mockpass
+ENV MOCKPASS_PORT=5156
+
+EXPOSE 5173
+
+CMD ["bun", "run", "--filter", "@singpass-zk/bench-browser", "dev"]
