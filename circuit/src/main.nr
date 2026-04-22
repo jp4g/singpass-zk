@@ -26,6 +26,13 @@ global PUBKEY_PACKED_FIELDS: u32 = 64 / 31 + 1;             // 3
 global NULLIFIER_PREIMAGE_LEN: u32 = SUB_PACKED_FIELDS + 1 + NONCE_PACKED_FIELDS + 1;   // 8
 global ISS_AUD_PREIMAGE_LEN: u32 = ISS_PACKED_FIELDS + 1 + AUD_PACKED_FIELDS + 1;       // 8
 
+// JSON claim keys - built once at comptime.
+global KEY_ISS: BoundedVec<u8, MAX_KEY_LEN> = comptime { key_vec("iss") };
+global KEY_AUD: BoundedVec<u8, MAX_KEY_LEN> = comptime { key_vec("aud") };
+global KEY_EXP: BoundedVec<u8, MAX_KEY_LEN> = comptime { key_vec("exp") };
+global KEY_NONCE: BoundedVec<u8, MAX_KEY_LEN> = comptime { key_vec("nonce") };
+global KEY_SUB: BoundedVec<u8, MAX_KEY_LEN> = comptime { key_vec("sub") };
+
 // Public outputs:
 //   key_hash      - poseidon2 over packed pubkey bytes. Verifier matches against
 //                   known Singpass pubkey hash(es) to reject unrelated signers.
@@ -34,7 +41,7 @@ global ISS_AUD_PREIMAGE_LEN: u32 = ISS_PACKED_FIELDS + 1 + AUD_PACKED_FIELDS + 1
 //                   public inputs per proof.
 //   nullifier     - poseidon2 over (sub, nonce); session-scoped identity handle.
 //   exp           - token expiry.
-pub struct Claims {
+pub struct SignPassOutput {
     key_hash: Field,
     iss_aud_hash: Field,
     nullifier: Field,
@@ -48,7 +55,7 @@ fn main(
     signing_input: [u8; MAX_SIGNING_INPUT],
     signing_input_len: u32,
     header_b64_len: u32,
-) -> pub Claims {
+) -> pub SignPassOutput {
     assert(signing_input[header_b64_len] == 0x2E);
 
     let message_hash: [u8; 32] = sha256_var(signing_input, signing_input_len);
@@ -84,21 +91,17 @@ fn main(
     }
 
     let json: JSON1kb = JSON1kb::parse_json(payload);
-    let iss: BoundedVec<u8, MAX_ISS_LEN> =
-        json.get_string_from_path([key_vec("iss")]).unwrap();
-    let aud: BoundedVec<u8, MAX_AUD_LEN> =
-        json.get_string_from_path([key_vec("aud")]).unwrap();
-    let exp: u64 = json.get_number_from_path([key_vec("exp")]).unwrap();
-    let nonce: BoundedVec<u8, MAX_NONCE_LEN> =
-        json.get_string_from_path([key_vec("nonce")]).unwrap();
-    let sub: BoundedVec<u8, MAX_SUB_LEN> =
-        json.get_string_from_path([key_vec("sub")]).unwrap();
+    let iss: BoundedVec<u8, MAX_ISS_LEN> = json.get_string_from_path([KEY_ISS]).unwrap();
+    let aud: BoundedVec<u8, MAX_AUD_LEN> = json.get_string_from_path([KEY_AUD]).unwrap();
+    let exp: u64 = json.get_number_from_path([KEY_EXP]).unwrap();
+    let nonce: BoundedVec<u8, MAX_NONCE_LEN> = json.get_string_from_path([KEY_NONCE]).unwrap();
+    let sub: BoundedVec<u8, MAX_SUB_LEN> = json.get_string_from_path([KEY_SUB]).unwrap();
 
     let key_hash = compute_key_hash(pubkey_x, pubkey_y);
     let iss_aud_hash = compute_iss_aud_hash(iss, aud);
     let nullifier = compute_nullifier(sub, nonce);
 
-    Claims { key_hash, iss_aud_hash, nullifier, exp }
+    SignPassOutput { key_hash, iss_aud_hash, nullifier, exp }
 }
 
 fn compute_key_hash(x: [u8; 32], y: [u8; 32]) -> Field {
@@ -115,11 +118,9 @@ fn compute_iss_aud_hash(
     iss: BoundedVec<u8, MAX_ISS_LEN>,
     aud: BoundedVec<u8, MAX_AUD_LEN>,
 ) -> Field {
-    let iss_bytes: [u8; MAX_ISS_LEN] = bv_to_storage(iss);
-    let aud_bytes: [u8; MAX_AUD_LEN] = bv_to_storage(aud);
 
-    let iss_packed: [Field; ISS_PACKED_FIELDS] = pack_bytes(iss_bytes);
-    let aud_packed: [Field; AUD_PACKED_FIELDS] = pack_bytes(aud_bytes);
+    let iss_packed: [Field; ISS_PACKED_FIELDS] = pack_bytes(iss.storage());
+    let aud_packed: [Field; AUD_PACKED_FIELDS] = pack_bytes(aud.storage());
 
     let mut preimage: [Field; ISS_AUD_PREIMAGE_LEN] = [0; ISS_AUD_PREIMAGE_LEN];
     for i in 0..ISS_PACKED_FIELDS {
@@ -138,11 +139,8 @@ fn compute_nullifier(
     sub: BoundedVec<u8, MAX_SUB_LEN>,
     nonce: BoundedVec<u8, MAX_NONCE_LEN>,
 ) -> Field {
-    let sub_bytes: [u8; MAX_SUB_LEN] = bv_to_storage(sub);
-    let nonce_bytes: [u8; MAX_NONCE_LEN] = bv_to_storage(nonce);
-
-    let sub_packed: [Field; SUB_PACKED_FIELDS] = pack_bytes(sub_bytes);
-    let nonce_packed: [Field; NONCE_PACKED_FIELDS] = pack_bytes(nonce_bytes);
+    let sub_packed: [Field; SUB_PACKED_FIELDS] = pack_bytes(sub.storage());
+    let nonce_packed: [Field; NONCE_PACKED_FIELDS] = pack_bytes(nonce.storage());
 
     let mut preimage: [Field; NULLIFIER_PREIMAGE_LEN] = [0; NULLIFIER_PREIMAGE_LEN];
     for i in 0..SUB_PACKED_FIELDS {
@@ -157,7 +155,7 @@ fn compute_nullifier(
     Poseidon2::hash(preimage, NULLIFIER_PREIMAGE_LEN)
 }
 
-fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
+comptime fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
     let bytes: [u8; N] = s.as_bytes();
     let mut storage: [u8; MAX_KEY_LEN] = [0; MAX_KEY_LEN];
     for i in 0..N {
@@ -165,14 +163,3 @@ fn key_vec<let N: u32>(s: str<N>) -> BoundedVec<u8, MAX_KEY_LEN> {
     }
     BoundedVec::from_parts_unchecked(storage, N)
 }
-
-fn bv_to_storage<let N: u32>(bv: BoundedVec<u8, N>) -> [u8; N] {
-    let mut out: [u8; N] = [0; N];
-    for i in 0..N {
-        if (i as u32) < bv.len() {
-            out[i] = bv.get_unchecked(i);
-        }
-    }
-    out
-}
-
