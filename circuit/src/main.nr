@@ -44,8 +44,6 @@ pub struct Claims {
 fn main(
     pubkey_x: [u8; 32],
     pubkey_y: [u8; 32],
-    expected_nonce: pub BoundedVec<u8, MAX_NONCE_LEN>,
-    now: pub u64,
     signature: [u8; 64],
     signing_input: [u8; MAX_SIGNING_INPUT],
     signing_input_len: u32,
@@ -96,12 +94,9 @@ fn main(
     let sub: BoundedVec<u8, MAX_SUB_LEN> =
         json.get_string_from_path([key_vec("sub")]).unwrap();
 
-    assert(bv_eq(nonce, expected_nonce), "nonce mismatch");
-    assert(exp > now, "token expired");
-
     let key_hash = compute_key_hash(pubkey_x, pubkey_y);
     let iss_aud_hash = compute_iss_aud_hash(iss, aud);
-    let nullifier = compute_nullifier(sub, expected_nonce);
+    let nullifier = compute_nullifier(sub, nonce);
 
     Claims { key_hash, iss_aud_hash, nullifier, exp }
 }
@@ -181,12 +176,3 @@ fn bv_to_storage<let N: u32>(bv: BoundedVec<u8, N>) -> [u8; N] {
     out
 }
 
-fn bv_eq<let N: u32>(a: BoundedVec<u8, N>, b: BoundedVec<u8, N>) -> bool {
-    let mut eq: bool = a.len() == b.len();
-    for i in 0..N {
-        let in_range = (i as u32) < a.len();
-        let byte_eq = a.get_unchecked(i) == b.get_unchecked(i);
-        eq = eq & (!in_range | byte_eq);
-    }
-    eq
-}

@@ -147,8 +147,6 @@ type SigningInputMeta = {
   signing_input_len: number;
   header_b64_len: number;
   payload_b64_len: number;
-  expected_nonce: BoundedVecJson;
-  now: number;
 };
 
 async function main() {
@@ -173,11 +171,6 @@ async function main() {
   const inputs = {
     pubkey_x,
     pubkey_y,
-    expected_nonce: {
-      storage: meta.expected_nonce.storage,
-      len: meta.expected_nonce.len.toString(),
-    },
-    now: meta.now.toString(),
     signature,
     signing_input: Array.from(signing_input),
     signing_input_len: meta.signing_input_len.toString(),
@@ -186,7 +179,7 @@ async function main() {
 
   console.log("1. Witness generation (noir_js)");
   console.log(
-    `   signing_input_len=${meta.signing_input_len}  header_b64_len=${meta.header_b64_len}  now=${meta.now}`,
+    `   signing_input_len=${meta.signing_input_len}  header_b64_len=${meta.header_b64_len}`,
   );
   const noir = new Noir(circuit);
   const tWit = performance.now();
@@ -219,7 +212,6 @@ async function main() {
   checkOutputs(
     publicInputs,
     expected,
-    meta,
     Uint8Array.from(pubkey_x),
     Uint8Array.from(pubkey_y),
   );
@@ -228,40 +220,30 @@ async function main() {
   process.exit(ok ? 0 : 1);
 }
 
-// Public inputs (in declaration order):
-//   expected_nonce : BoundedVec<u8, 64>     — 65
-//   now            : u64                    — 1
-//   Claims return:
-//     key_hash     : Field                  — 1
-//     iss_aud_hash : Field                  — 1
-//     nullifier    : Field                  — 1
-//     exp          : u64                    — 1
-// Total: 65 + 1 + 4 = 70.
+// Public inputs = Claims return only (no public prover-side inputs beyond
+// the pubkey, which is private):
+//   key_hash      : Field   - 1
+//   iss_aud_hash  : Field   - 1
+//   nullifier     : Field   - 1
+//   exp           : u64     - 1
+// Total: 4.
 function checkOutputs(
   publicInputs: readonly string[],
   expected: PayloadClaims,
-  meta: SigningInputMeta,
   pubkeyX: Uint8Array,
   pubkeyY: Uint8Array,
 ): void {
-  const EXPECTED_COUNT = (MAX_NONCE_LEN + 1) + 1 + 1 + 1 + 1 + 1;
+  const EXPECTED_COUNT = 4;
   if (publicInputs.length !== EXPECTED_COUNT) {
     throw new Error(
       `public input count ${publicInputs.length} != expected ${EXPECTED_COUNT}`,
     );
   }
 
-  let off = 0;
-  off += MAX_NONCE_LEN + 1;
-  off += 1; // now
-
-  const keyHash = BigInt(publicInputs[off] ?? "0");
-  off += 1;
-  const issAudHash = BigInt(publicInputs[off] ?? "0");
-  off += 1;
-  const nullifier = BigInt(publicInputs[off] ?? "0");
-  off += 1;
-  const exp = Number(BigInt(publicInputs[off] ?? "0"));
+  const keyHash = BigInt(publicInputs[0] ?? "0");
+  const issAudHash = BigInt(publicInputs[1] ?? "0");
+  const nullifier = BigInt(publicInputs[2] ?? "0");
+  const exp = Number(BigInt(publicInputs[3] ?? "0"));
 
   const expectedK = expectedKeyHash(pubkeyX, pubkeyY);
   if (keyHash !== expectedK) {
@@ -287,13 +269,15 @@ function checkOutputs(
   }
 
   if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
-  if (exp <= meta.now) throw new Error(`exp <= now - shouldn't have verified`);
+  const now = Math.floor(Date.now() / 1000);
+  if (exp <= now)
+    throw new Error(`exp ${exp} <= now ${now} - token expired (verifier-side check)`);
 
   console.log(`   key_hash     = 0x${keyHash.toString(16)}`);
   console.log(`   iss_aud_hash = 0x${issAudHash.toString(16)}`);
   console.log(`   nullifier    = 0x${nullifier.toString(16)}`);
-  console.log(`   exp          = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
-  console.log(`   (all 3 hashes recomputed off-circuit; match)`);
+  console.log(`   exp          = ${expected.exp} (verifier's now=${now}, diff=${expected.exp - now}s)`);
+  console.log(`   (all 3 hashes recomputed off-circuit; exp checked off-circuit; match)`);
 }
 
 main().catch((e) => {
