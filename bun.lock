@@ -16,6 +16,7 @@
         "@aztec/bb.js": "4.2.0",
         "@noir-lang/noir_js": "1.0.0-beta.20",
         "@singpass-zk/driver": "workspace:*",
+        "@zkpassport/poseidon2": "^0.6.2",
         "jose": "^5.9.6",
       },
     },
@@ -46,6 +47,8 @@
     "@singpass-zk/driver": ["@singpass-zk/driver@workspace:packages/driver"],
 
     "@singpass-zk/rp": ["@singpass-zk/rp@workspace:packages/rp"],
+
+    "@zkpassport/poseidon2": ["@zkpassport/poseidon2@0.6.2", "", {}, "sha512-6sFHX9kAcrmDmBEEndvjZ8DA9FomunirQ5oCV6oD7bqr/lP0n0OBSRn86SZgQBXwRR+vq7sk16y31OgRBIOJ5Q=="],
 
     "comlink": ["comlink@4.4.2", "", {}, "sha512-OxGdvBmJuNKSCMO4NTl1L47VRp6xn2wG4F/2hYzB6tiCb709otOxtEYCSvK80PtjODfXXZu8ds+Nw5kVCjqd2g=="],
 

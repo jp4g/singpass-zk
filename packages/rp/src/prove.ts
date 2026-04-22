@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Noir, type CompiledCircuit } from "@noir-lang/noir_js";
 import { Barretenberg, UltraHonkBackend } from "@aztec/bb.js";
+import { poseidon2Hash } from "@zkpassport/poseidon2";
 import { REPO_ROOT, OUT_DIR } from "@singpass-zk/driver/src/paths.ts";
 import {
   MAX_SIGNING_INPUT,
@@ -13,6 +14,53 @@ import {
 
 const CIRCUIT_JSON = resolve(REPO_ROOT, "circuit/target/singpass_zk.json");
 const MAX_SUB_LEN = 64;
+// Matches circuit/src/main.nr: pack_bytes<N> -> [Field; N/31 + 1].
+const SUB_PACKED_FIELDS = Math.floor(MAX_SUB_LEN / 31) + 1;       // 3
+const NONCE_PACKED_FIELDS = Math.floor(MAX_NONCE_LEN / 31) + 1;   // 3
+
+// Pack a byte array into Field-sized little-endian chunks (31 bytes per Field).
+// Mirrors nodash::pack_bytes.
+function packBytes(bytes: Uint8Array, maxLen: number): bigint[] {
+  const fieldCount = Math.floor(maxLen / 31) + 1;
+  const out: bigint[] = new Array(fieldCount).fill(0n);
+  for (let i = 0; i < fieldCount; i++) {
+    let acc = 0n;
+    let mul = 1n;
+    for (let j = 0; j < 31; j++) {
+      const idx = i * 31 + j;
+      const byte = idx < maxLen && idx < bytes.length ? bytes[idx] ?? 0 : 0;
+      acc += BigInt(byte) * mul;
+      mul *= 256n;
+    }
+    out[i] = acc;
+  }
+  return out;
+}
+
+// poseidon2(sub_packed || sub_len || nonce_packed || nonce_len)
+// Mirrors circuit/src/main.nr:compute_nullifier.
+function expectedNullifier(
+  sub: Uint8Array,
+  subLen: number,
+  nonce: Uint8Array,
+  nonceLen: number,
+): bigint {
+  const subZero = new Uint8Array(MAX_SUB_LEN);
+  subZero.set(sub.subarray(0, subLen), 0);
+  const nonceZero = new Uint8Array(MAX_NONCE_LEN);
+  nonceZero.set(nonce.subarray(0, nonceLen), 0);
+
+  const subPacked = packBytes(subZero, MAX_SUB_LEN);
+  const noncePacked = packBytes(nonceZero, MAX_NONCE_LEN);
+
+  const preimage: bigint[] = [
+    ...subPacked,
+    BigInt(subLen),
+    ...noncePacked,
+    BigInt(nonceLen),
+  ];
+  return poseidon2Hash(preimage);
+}
 
 async function readHex(name: string): Promise<number[]> {
   const hex = (await readFile(resolve(OUT_DIR, name), "utf8")).trim();
@@ -145,32 +193,31 @@ async function main() {
     ).toFixed(2)}s`,
   );
 
-  console.log("5. Check sub + exp outputs match payload");
+  console.log("5. Check nullifier + exp outputs match expected");
   checkOutputs(publicInputs, expected, meta);
-  console.log("   sub and exp match");
 
   await api.destroy();
   process.exit(ok ? 0 : 1);
 }
 
 // Public inputs (in declaration order):
-//   pubkey_x          : [u8; 32]                  — 32
-//   pubkey_y          : [u8; 32]                  — 32
-//   expected_iss      : BoundedVec<u8, 64>        — 65
-//   expected_aud      : BoundedVec<u8, 64>        — 65
-//   expected_nonce    : BoundedVec<u8, 64>        — 65
-//   now               : u64                       — 1
+//   pubkey_x        : [u8; 32]                — 32
+//   pubkey_y        : [u8; 32]                — 32
+//   expected_iss    : BoundedVec<u8, 64>      — 65
+//   expected_aud    : BoundedVec<u8, 64>      — 65
+//   expected_nonce  : BoundedVec<u8, 64>      — 65
+//   now             : u64                     — 1
 //   Claims return:
-//     sub : BoundedVec<u8, 64>                    — 65
-//     exp : u64                                   — 1
-// Total: 32 + 32 + 65*3 + 1 + 65 + 1 = 326.
+//     nullifier : Field                       — 1
+//     exp       : u64                         — 1
+// Total: 32 + 32 + 65*3 + 1 + 1 + 1 = 262.
 function checkOutputs(
   publicInputs: readonly string[],
   expected: PayloadClaims,
   meta: SigningInputMeta,
 ): void {
   const EXPECTED_COUNT =
-    32 + 32 + (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + (MAX_NONCE_LEN + 1) + 1 + (MAX_SUB_LEN + 1) + 1;
+    32 + 32 + (MAX_ISS_LEN + 1) + (MAX_AUD_LEN + 1) + (MAX_NONCE_LEN + 1) + 1 + 1 + 1;
   if (publicInputs.length !== EXPECTED_COUNT) {
     throw new Error(
       `public input count ${publicInputs.length} != expected ${EXPECTED_COUNT}`,
@@ -185,37 +232,25 @@ function checkOutputs(
   off += MAX_NONCE_LEN + 1;
   off += 1; // now
 
-  const sub = decodeBV(publicInputs, off, MAX_SUB_LEN);
-  off += MAX_SUB_LEN + 1;
+  const nullifier = BigInt(publicInputs[off] ?? "0");
+  off += 1;
   const exp = Number(BigInt(publicInputs[off] ?? "0"));
 
-  const encExpected = new TextEncoder().encode(expected.sub);
-  for (let i = 0; i < encExpected.length; i++) {
-    if (sub.storage[i] !== encExpected[i]) {
-      throw new Error(`sub[${i}] mismatch`);
-    }
+  const nonceBytes = new TextEncoder().encode(expected.nonce);
+  const subBytes = new TextEncoder().encode(expected.sub);
+  const expectedN = expectedNullifier(subBytes, subBytes.length, nonceBytes, nonceBytes.length);
+
+  if (nullifier !== expectedN) {
+    throw new Error(
+      `nullifier mismatch:\n  circuit:  0x${nullifier.toString(16)}\n  expected: 0x${expectedN.toString(16)}`,
+    );
   }
-  if (sub.len !== encExpected.length)
-    throw new Error(`sub_len ${sub.len} != ${encExpected.length}`);
+  if (exp !== expected.exp) throw new Error(`exp ${exp} != ${expected.exp}`);
+  if (exp <= meta.now) throw new Error(`exp <= now — shouldn't have verified`);
 
-  if (exp !== expected.exp)
-    throw new Error(`exp ${exp} != ${expected.exp}`);
-  if (exp <= meta.now)
-    throw new Error(`exp ${exp} <= now ${meta.now} (shouldn't have verified!)`);
-
-  console.log(`   sub = "${expected.sub}"`);
-  console.log(`   exp = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
-}
-
-function decodeBV(
-  publicInputs: readonly string[],
-  offset: number,
-  maxLen: number,
-): { storage: Uint8Array; len: number } {
-  const storageFields = publicInputs.slice(offset, offset + maxLen);
-  const storage = fieldsToBytes(storageFields);
-  const len = Number(BigInt(publicInputs[offset + maxLen] ?? "0"));
-  return { storage, len };
+  console.log(`   nullifier = 0x${nullifier.toString(16)}`);
+  console.log(`   exp       = ${expected.exp} (now=${meta.now}, diff=${expected.exp - meta.now}s)`);
+  console.log(`   (nullifier recomputed from sub + nonce off-circuit; matches)`);
 }
 
 main().catch((e) => {
