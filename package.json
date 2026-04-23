@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "description": "Singpass FAPI ID token verification inside a Noir circuit (prototype)",
+  "license": "MIT",
   "workspaces": [
     "packages/*"
   ],

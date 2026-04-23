@@ -159,3 +159,7 @@ What's not (in rough priority order):
 ## Patches
 
 `patches/mockpass-iat-floor.patch` floors MockPass's `iat` claim. MockPass emits `Date.now() / 1000` (a float); the in-circuit JSON parser is integer-only for numbers and barfs on the `.`. Real Singpass emits integer `iat` per FAPI, so this is a MockPass-only quirk. Applied idempotently by `bun run mockpass:install` (and via a `patch -p1` step inside `Dockerfile.mockpass`).
+
+## License
+
+[MIT](LICENSE).
